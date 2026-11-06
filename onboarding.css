@@ -1,0 +1,143 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #1a1a2e;
+  background: linear-gradient(160deg, #f5f6fa 0%, #eceaff 100%);
+  min-height: 100vh;
+  padding: 40px 20px;
+}
+
+.wrap {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.hero {
+  text-align: center;
+  margin-bottom: 36px;
+}
+
+.logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  box-shadow: 0 6px 20px rgba(74, 58, 255, 0.3);
+}
+
+.hero h1 {
+  font-size: 30px;
+  margin: 16px 0 8px;
+  color: #3a2be0;
+}
+
+.sub {
+  font-size: 16px;
+  color: #4b5563;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.step {
+  display: flex;
+  gap: 16px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.num {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #4a3aff;
+  color: #fff;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-body h3 {
+  font-size: 17px;
+  margin-bottom: 4px;
+}
+
+.step-body p {
+  font-size: 14px;
+  color: #4b5563;
+  margin-bottom: 12px;
+}
+
+.btn-primary,
+.btn-secondary {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: #4a3aff;
+  color: #fff;
+}
+
+.btn-secondary {
+  background: #e5e7eb;
+  color: #1a1a2e;
+}
+
+.btn-primary:hover,
+.btn-secondary:hover {
+  opacity: 0.92;
+}
+
+.signed-in {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #e5e7eb;
+}
+
+.check {
+  color: #166534;
+  font-weight: 600;
+}
+
+.privacy-note {
+  text-align: center;
+  margin: 28px 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.privacy-note a {
+  color: #4a3aff;
+}
+
+.foot {
+  text-align: center;
+}
+
+.hidden {
+  display: none;
+}

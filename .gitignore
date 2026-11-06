@@ -1,0 +1,21 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+.vercel/
+.vscode/
+
+# Personal / private files
+backend/family/
+
+# Dependencies and environments
+node_modules/
+.venv/
+
+# Build output
+dist/
+
+# OS / logs
+*.log
+.DS_Store
+Thumbs.db

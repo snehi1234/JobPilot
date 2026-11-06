@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobPilot — Privacy Policy</title>
+  <link rel="stylesheet" href="/legal.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <h1>JobPilot Privacy Policy</h1>
+      <p class="sub">Last updated: November 5, 2026</p>
+    </header>
+
+    <section class="step">
+      <h3>What we collect</h3>
+      <p>
+        JobPilot is a Chrome extension that autofills job application forms.
+        To do this, we store the profile information you provide: your Quick
+        Details (name, contact info, work authorization, optional voluntary
+        demographics), any free-text notes you type, and the text extracted
+        from a resume you upload. If you sign in with Google, we store your
+        Google account identifier and email address to associate this data
+        with your account. For autofill, we also process application form
+        labels and choices, job posting details, and the site's hostname or
+        job location. Monthly AI-request counters are stored per account.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>How we use it</h3>
+      <p>
+        Your profile is used solely to generate and fill in answers on job
+        application forms. When you request answers, the relevant profile
+        and resume text, optional demographics, form fields, and job details
+        are sent to our Vercel-hosted backend and third-party AI provider
+        Groq. This release uses Groq's Free plan and does not fall back to
+        another provider when its quota is exhausted.
+        Automatic filling is off by default.
+        If you explicitly enable it in the panel, this processing and filling
+        can occur on recognized job application pages without another click
+        or prior review. We do not sell your data or use it for advertising.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>Where it's stored</h3>
+      <p>
+        Data is stored securely in our cloud database (Supabase), isolated
+        per user account by authenticated backend requests. Direct client
+        access to the database is blocked by row-level security. A copy is
+        cached locally in your browser (<code>chrome.storage.local</code>).
+        Authentication tokens and extension preferences are stored locally.
+        Automatic-filling consent is local to this browser and resets when
+        you sign out or change accounts.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>Your choices</h3>
+      <p>
+        You can view and edit your data at any time from the JobPilot side
+        panel and turn automatic filling off to stop future automatic fills.
+        The <strong>"Delete My Data"</strong> button removes your saved profile,
+        resume text, and demographics from the profile database and this
+        browser, and disables automatic filling. Signing out clears the local
+        profile cache but does not delete your cloud profile.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>Data retention</h3>
+      <p>
+        Saved profile data is retained until you delete it. Monthly usage
+        counters are retained separately to enforce the usage limit and are
+        not removed by the profile-deletion button. Contact us about other
+        retained records. Processing and retention by hosting and AI providers
+        are also subject to their applicable service terms and privacy policies.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>Chrome Web Store data use</h3>
+      <p>
+        JobPilot's use and transfer of user data adhere to the Chrome Web Store
+        User Data Policy, including its
+        <a href="https://developer.chrome.com/docs/webstore/program-policies/limited-use/">Limited Use requirements</a>.
+        Data is used only to provide and maintain the disclosed job-application
+        autofill functionality. We do not sell user data, transfer it outside
+        approved use cases, use it for unrelated purposes, or use it to determine
+        creditworthiness or for lending.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>Children's privacy</h3>
+      <p>
+        JobPilot is not directed at children under 13, and we do not
+        knowingly collect data from them.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>Changes to this policy</h3>
+      <p>
+        We may update this policy occasionally. Material changes will be
+        reflected by updating the "Last updated" date above.
+      </p>
+    </section>
+
+    <section class="step">
+      <h3>Contact</h3>
+      <p>
+        Questions or requests regarding your data? Contact us at
+        <a href="mailto:snehithbootla1@gmail.com">snehithbootla1@gmail.com</a>.
+      </p>
+    </section>
+
+    <p class="foot">
+      <a href="/terms.html">Terms of Service</a>
+    </p>
+  </main>
+</body>
+</html>

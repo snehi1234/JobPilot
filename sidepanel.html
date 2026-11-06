@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobPilot</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>🚀 JobPilot</h1>
+    <p class="tagline">AI autofill for job applications</p>
+  </header>
+
+  <!-- Auth bar (only shown when Google sign-in is configured) -->
+  <section id="authBar" class="auth-bar hidden">
+    <div id="authSignedOut" class="hidden">
+      <button id="signInBtn" class="btn-google" type="button">
+        Sign in with Google
+      </button>
+    </div>
+    <div id="authSignedIn" class="auth-user hidden">
+      <img id="authAvatar" class="auth-avatar" alt="" />
+      <span id="authEmail" class="auth-email"></span>
+      <button id="signOutBtn" class="btn-link" type="button">Sign out</button>
+    </div>
+  </section>
+
+  <main>
+    <!-- Status banner -->
+    <div id="status" class="status hidden"></div>
+
+    <!-- Shown when signed out (and auth is enabled) -->
+    <div id="signInPrompt" class="card hidden">
+      <p class="hint" style="margin: 0; text-align: center;">
+        🔒 Please sign in with Google above to set up your profile and use
+        autofill. Your details stay private to your account.
+      </p>
+    </div>
+
+    <!-- All profile/form content — gated behind sign-in when auth is enabled -->
+    <div id="appContent" class="hidden">
+    <section class="card">
+      <h2>How your data is used</h2>
+      <p class="hint">
+        Saved profile details and resume text sync to JobPilot's backend and
+        Supabase database. When you request AI answers, your profile, resume,
+        optional demographics, form fields, and job details are sent through
+        the backend to Groq. AI answers can be incorrect;
+        always review them before submitting an application.
+        Free-tier limits may temporarily block AI requests; there is no
+        fallback to a paid provider.
+        <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
+      </p>
+    </section>
+    <!-- Structured quick details -->
+    <section class="card">
+      <h2>1. Quick Details</h2>
+      <p class="hint">
+        Provide the details you want JobPilot to use for common fields.
+        Check generated answers for accuracy before submitting.
+      </p>
+
+      <div class="field-grid">
+        <label class="field">
+          <span>First name</span>
+          <input type="text" id="sf_firstName" placeholder="Jane" />
+        </label>
+        <label class="field">
+          <span>Last name</span>
+          <input type="text" id="sf_lastName" placeholder="Doe" />
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input type="email" id="sf_email" placeholder="you@example.com" />
+        </label>
+        <label class="field">
+          <span>Phone</span>
+          <input type="tel" id="sf_phone" placeholder="+1 555-000-0000" />
+        </label>
+        <label class="field">
+          <span>City, State</span>
+          <input type="text" id="sf_location" placeholder="City, State" />
+        </label>
+        <label class="field">
+          <span>Country</span>
+          <input type="text" id="sf_country" placeholder="United States" />
+        </label>
+        <label class="field">
+          <span>LinkedIn URL</span>
+          <input type="url" id="sf_linkedin" placeholder="linkedin.com/in/..." />
+        </label>
+        <label class="field">
+          <span>Website / GitHub</span>
+          <input type="url" id="sf_website" placeholder="github.com/..." />
+        </label>
+        <label class="field">
+          <span>Years of experience</span>
+          <input type="text" id="sf_experience" placeholder="4" />
+        </label>
+        <label class="field">
+          <span>Work authorization</span>
+          <input type="text" id="sf_workAuth" placeholder="US Citizen / H-1B / etc." />
+        </label>
+        <label class="field">
+          <span>Needs sponsorship?</span>
+          <select id="sf_sponsorship">
+            <option value="">—</option>
+            <option value="No">No</option>
+            <option value="Yes">Yes</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Salary target (optional)</span>
+          <input type="text" id="sf_salary" placeholder="e.g. $160,000 or blank" />
+        </label>
+      </div>
+
+      <h3 class="subhead">Voluntary Demographics (optional)</h3>
+      <p class="hint">
+        Used only to auto-fill EEO/diversity questions. Leave blank or choose
+        "Decline to answer" for any you'd rather skip.
+      </p>
+      <div class="field-grid">
+        <label class="field">
+          <span>Gender</span>
+          <select id="sf_gender">
+            <option value="">—</option>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+            <option value="Non-binary">Non-binary</option>
+            <option value="Decline to answer">Decline to answer</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Race / Ethnicity</span>
+          <input type="text" id="sf_ethnicity" placeholder="e.g. Asian, or Decline" />
+        </label>
+        <label class="field">
+          <span>Disability status</span>
+          <select id="sf_disability">
+            <option value="">—</option>
+            <option value="No">No, I don't have a disability</option>
+            <option value="Yes">Yes, I have a disability</option>
+            <option value="Decline to answer">Decline to answer</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Veteran / Military status</span>
+          <select id="sf_veteran">
+            <option value="">—</option>
+            <option value="Not a veteran">Not a protected veteran</option>
+            <option value="Veteran">I am a protected veteran</option>
+            <option value="Decline to answer">Decline to answer</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Sexual orientation</span>
+          <input type="text" id="sf_orientation" placeholder="e.g. Straight, or Decline" />
+        </label>
+        <label class="field">
+          <span>Transgender?</span>
+          <select id="sf_transgender">
+            <option value="">—</option>
+            <option value="No">No</option>
+            <option value="Yes">Yes</option>
+            <option value="Decline to answer">Decline to answer</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>First-gen college grad?</span>
+          <select id="sf_firstGen">
+            <option value="">—</option>
+            <option value="No">No</option>
+            <option value="Yes">Yes</option>
+            <option value="Decline to answer">Decline to answer</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Parent / caretaker?</span>
+          <select id="sf_caretaker">
+            <option value="">—</option>
+            <option value="No">No</option>
+            <option value="Yes">Yes</option>
+            <option value="Decline to answer">Decline to answer</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <!-- Profile / resume -->
+    <section class="card">
+      <h2>2. Your Profile</h2>
+      <p class="hint">
+        Upload your resume (PDF or Word) — its text is stored and used for autofill
+        (not shown here). Optionally add extra notes below (preferences, salary,
+        anything not on your resume).
+      </p>
+
+      <div class="upload-row">
+        <label for="resumeFile" class="btn-upload">📄 Upload Resume (PDF or Word)</label>
+        <input
+          type="file"
+          id="resumeFile"
+          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
+          hidden
+        />
+        <span id="fileName" class="file-name"></span>
+      </div>
+
+      <textarea
+        id="profile"
+        rows="6"
+        placeholder="Optional: extra notes not on your resume (preferences, salary, etc.)"
+      ></textarea>
+    </section>
+
+    <div class="button-row">
+      <button id="save" class="btn-secondary" type="button">Save</button>
+      <button id="fill" class="btn-primary" type="button">✨ Fill This Form</button>
+    </div>
+    <p id="fillHint" class="hint hidden" style="margin-top: -8px;"></p>
+
+    <div class="fab-toggle-row">
+      <label class="switch-label">
+        <input type="checkbox" id="fabToggle" checked />
+        <span>Show floating Autofill button on job pages</span>
+      </label>
+    </div>
+
+    <section class="card">
+      <h2>Automatic filling (optional)</h2>
+      <p id="autoFillDisclosure" class="hint">
+        Off by default. If enabled, opening a recognized job application page
+        automatically sends your saved profile, resume text, optional demographics,
+        form fields, and job details to JobPilot's backend and Groq,
+        then writes answers into the page without prior review.
+        This applies to recognized job pages in this browser while the floating
+        button is enabled. Turn it off here to stop future automatic fills.
+        Review all filled answers and submit applications yourself.
+      </p>
+      <label class="switch-label">
+        <input type="checkbox" id="autoFillToggle" aria-describedby="autoFillDisclosure" disabled />
+        <span>I agree to automatic AI processing and filling on job pages</span>
+      </label>
+    </section>
+
+    <!-- Review area -->
+    <section id="reviewSection" class="card hidden">
+      <h2>3. Review Suggestions</h2>
+      <p class="hint">Check the answers, then they'll be applied to the page.</p>
+      <div id="review"></div>
+      <div class="button-row">
+        <button id="applyAll" class="btn-primary" type="button">Apply to Page</button>
+      </div>
+    </section>
+
+    <!-- Danger zone: permanently delete cloud + local data -->
+    <section class="card danger-zone">
+      <h2>Privacy</h2>
+      <p class="hint">
+        Delete your saved profile, resume text, and demographics from JobPilot's
+        profile database and this browser. Automatic filling will be turned off.
+        Monthly usage counters are retained separately to enforce the usage limit.
+      </p>
+      <button id="deleteData" class="btn-danger" type="button">
+        🗑️ Delete My Data
+      </button>
+    </section>
+    </div><!-- /#appContent -->
+  </main>
+
+  <script src="lib/jszip.min.js"></script>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

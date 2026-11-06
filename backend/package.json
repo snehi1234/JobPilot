@@ -1,0 +1,14 @@
+{
+  "name": "jobpilot-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JobPilot backend proxy — holds the AI API key and serves autofill/parse requests for all users.",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

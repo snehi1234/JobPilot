@@ -1,0 +1,15 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b4bff"/>
+      <stop offset="1" stop-color="#3a2be0"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
+  <!-- "JP" monogram -->
+  <text x="64" y="86" font-family="Arial, Helvetica, sans-serif" font-weight="800"
+        font-size="58" fill="#ffffff" text-anchor="middle">JP</text>
+  <!-- Underline accent representing a checked/filled form field -->
+  <rect x="34" y="92" width="60" height="6" rx="3" fill="#ffd84a"/>
+</svg>

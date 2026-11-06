@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome to JobPilot</title>
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <img src="icons/icon128.png" alt="JobPilot" class="logo" />
+      <h1>Welcome to JobPilot</h1>
+      <p class="sub">AI-assisted job application autofill, with you in control.</p>
+    </header>
+
+    <section class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <div class="step-body">
+          <h3>Sign in with Google</h3>
+          <p>Your profile is saved securely to your account and syncs across devices.</p>
+          <div id="authArea">
+            <button id="signInBtn" class="btn-primary" type="button">Sign in with Google</button>
+            <div id="signedIn" class="signed-in hidden">
+              <img id="avatar" class="avatar" alt="" />
+              <span id="email"></span>
+              <span class="check">✓ Signed in</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="num">2</div>
+        <div class="step-body">
+          <h3>Add your details &amp; resume</h3>
+          <p>
+            Open the JobPilot side panel, fill in your Quick Details, and upload
+            your resume (PDF or Word). Your saved details and resume text sync
+            to JobPilot's backend and Supabase database.
+          </p>
+          <button id="openPanelBtn" class="btn-secondary" type="button">Open JobPilot panel</button>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="num">3</div>
+        <div class="step-body">
+          <h3>Choose how to fill applications</h3>
+          <p>
+            On a job form (Greenhouse, Lever, Ashby, Workday, and more), click the
+            floating <strong>✨ Autofill</strong> button to fill directly, or use
+            the panel to review suggestions before applying them. Automatic
+            filling on page load is off by default; enable it only if you agree
+            to the disclosure in the panel. Review the completed form, attach
+            your resume manually, and submit.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="privacy-note">
+      <p>
+        AI processing sends your profile, resume text, optional demographics,
+        form fields, and job details to JobPilot's backend and Groq.
+        With automatic filling enabled, this happens when
+        recognized job pages load. AI can make mistakes. Delete your saved
+        profile or disable automatic filling from the panel. See our
+        <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
+        and
+        <a href="terms.html" target="_blank" rel="noopener">Terms of Service</a>.
+      </p>
+    </section>
+
+    <footer class="foot">
+      <button id="doneBtn" class="btn-primary" type="button">I'm ready — let's go</button>
+    </footer>
+  </main>
+
+  <script type="module" src="onboarding.js"></script>
+</body>
+</html>

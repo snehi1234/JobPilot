@@ -26,6 +26,13 @@ chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ tabId: tab.id }).catch((err) => console.error(err));
 });
 
+// Apply store updates as soon as Chrome downloads them instead of waiting for
+// the extension to go idle, and check for updates when the browser starts.
+chrome.runtime.onUpdateAvailable?.addListener(() => chrome.runtime.reload());
+chrome.runtime.onStartup?.addListener(() => {
+  Promise.resolve(chrome.runtime.requestUpdateCheck?.()).catch(() => {});
+});
+
 // ---------- Backend calls ----------
 
 // Build headers, attaching the Google ID token when the user is signed in.

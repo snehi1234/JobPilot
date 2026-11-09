@@ -895,6 +895,10 @@ chrome.tabs.onUpdated.addListener((_tabId, info) => {
 
 // ---------- Wire up ----------
 
+const versionLabel = document.getElementById("appVersion");
+const manifestVersion = chrome.runtime.getManifest?.()?.version;
+if (versionLabel && manifestVersion) versionLabel.textContent = `· v${manifestVersion}`;
+
 els.save.addEventListener("click", () => save().catch(err => console.error("[JobPilot] Save failed:", err.message)));
 els.fill.addEventListener("click", fillForm);
 els.applyAll.addEventListener("click", applyAll);

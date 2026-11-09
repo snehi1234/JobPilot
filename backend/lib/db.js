@@ -67,6 +67,18 @@ export async function upsertProfile(userSub, data) {
   return rows[0] || row;
 }
 
+// Lightweight connectivity/schema check used by /api/health. Returns only
+// status information, never row data.
+export async function checkProfilesTable() {
+  const { url, key } = config();
+  const res = await fetch(`${url}/rest/v1/${TABLE}?select=user_sub&limit=0`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  if (res.ok) return { ok: true, status: res.status };
+  const body = await res.json().catch(() => ({}));
+  return { ok: false, status: res.status, code: body.code || null, hint: (body.message || "").slice(0, 160) };
+}
+
 // Delete a user's profile (for "delete my data").
 export async function deleteProfile(userSub) {
   const { url, key } = config();

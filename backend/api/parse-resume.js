@@ -109,6 +109,12 @@ export default async function handler(req, res) {
     }
     const expList = Array.isArray(parsed.experience) ? parsed.experience : [];
     const eduList = Array.isArray(parsed.education) ? parsed.education : [];
+    const CONTACT_KEYS = ["firstName", "lastName", "email", "phone", "location", "country", "linkedin", "website", "experience"];
+    const structured = {};
+    for (const k of CONTACT_KEYS) {
+      const v = parsed.contact?.[k];
+      if (typeof v === "string" && v.trim()) structured[k] = v.trim().slice(0, 200);
+    }
 
     return res.status(200).json({
       counts: {
@@ -116,6 +122,7 @@ export default async function handler(req, res) {
         education: clamp(Math.max(eduList.length, heuristic.education)),
       },
       entries: { experience: expList, education: eduList },
+      structured,
     });
   } catch (err) {
     if (err.status === 429) {

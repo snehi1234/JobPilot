@@ -5,6 +5,9 @@
       "maxDuration": 60
     }
   },
+  "crons": [
+    { "path": "/api/health", "schedule": "0 12 * * *" }
+  ],
   "rewrites": [
     { "source": "/", "destination": "/index.html" }
   ]

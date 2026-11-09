@@ -94,18 +94,21 @@ Return ONLY valid JSON:
 }
 
 export function buildParsePrompt(profile) {
-  return `You are a precise resume parser. From the resume below, list EVERY job and EVERY school.
+  return `You are a precise resume parser. From the resume below, extract the candidate's contact details, and list EVERY job and EVERY school.
 """
 ${profile || "(no resume text)"}
 """
 Rules:
+- Copy contact details exactly as written. Use "" for anything not present in the resume — never guess.
+- "location" is the candidate's own "City, State" (not an employer's location). "website" is a GitHub or personal site URL.
+- "experience" is total years of professional experience only if the resume states it; otherwise "".
 - Create ONE experience item per distinct employer/role. Capture them ALL. Never merge or skip.
 - Order most-recent-first.
 - Create one education item per school/degree.
 - Keep values short.
 
 Respond with ONLY this JSON:
-{"experience":[{"position":"","organization":"","startDate":"","endDate":""}],"education":[{"degree":"","major":"","institution":"","graduationDate":""}]}`;
+{"contact":{"firstName":"","lastName":"","email":"","phone":"","location":"","country":"","linkedin":"","website":"","experience":""},"experience":[{"position":"","organization":"","startDate":"","endDate":""}],"education":[{"degree":"","major":"","institution":"","graduationDate":""}]}`;
 }
 
 export const FILL_GEN_CONFIG = {
@@ -116,6 +119,6 @@ export const FILL_GEN_CONFIG = {
 
 export const PARSE_GEN_CONFIG = {
   temperature: 0,
-  maxOutputTokens: 2048,
+  maxOutputTokens: 3072,
   responseMimeType: "application/json",
 };

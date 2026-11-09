@@ -3,6 +3,7 @@
 import * as pdfjsLib from "./lib/pdf.min.mjs";
 import { isAuthConfigured, getCurrentUser, signIn, signOut } from "./auth.js";
 import { cloudLoad, cloudSave, cloudDelete } from "./cloud.js";
+import { extractResumeDetails, mergeResumeDetails } from "./lib/resume-profile.mjs";
 
 // Point pdf.js at its local worker (bundled in the extension).
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.min.mjs");
@@ -65,6 +66,9 @@ function readStructured() {
 
 // Holds the latest AI suggestions so "Apply to Page" can use them.
 let currentSuggestions = [];
+let currentTarget = null;
+let fillInProgress = false;
+let statusTimer;
 
 // Extracted resume text from an uploaded PDF. Kept SEPARATE from the visible
 // profile textbox so we don't dump the whole resume into the UI, but still use
@@ -109,9 +113,13 @@ async function extractPdfText(file) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const strings = content.items.map((item) => item.str);
-    text += strings.join(" ") + "\n";
+    text += content.items.map(item => `${item.str || ""}${item.hasEOL ? "\n" : " "}`).join("") + "\n";
+    const annotations = await page.getAnnotations();
+    text += annotations
+      .filter(annotation => annotation.subtype === "Link" && /^https?:\/\//i.test(annotation.url || ""))
+      .map(annotation => annotation.url).join("\n") + "\n";
   }
+  await pdf.destroy();
   return text.trim();
 }
 
@@ -181,15 +189,32 @@ async function handleResumeUpload(event) {
       return;
     }
 
-    // Case 2: success — store the resume text SEPARATELY (not in the textbox).
     uploadedResumeText = text;
+    const initial = mergeResumeDetails(readStructured(), extractResumeDetails(text));
+    STRUCTURED_IDS.forEach(key => { if (sfEl(key)) sfEl(key).value = initial[key] || ""; });
+    await chrome.storage.local.set({ uploadedResumeText, structured: readStructured(), profileSyncPending: true });
+    showStatus("Resume text read. Extracting profile details…", "info");
+    let warning = "";
+    try {
+      const parsed = await chrome.runtime.sendMessage({ type: "COUNT_ENTRIES", profile: text });
+      if (parsed?.error) throw new Error(parsed.error);
+      if (parsed?.warning) warning = parsed.warning;
+      const merged = mergeResumeDetails(readStructured(), parsed?.structured);
+      STRUCTURED_IDS.forEach(key => { if (sfEl(key)) sfEl(key).value = merged[key] || ""; });
+    } catch (err) {
+      warning = `AI profile extraction failed: ${err.message}. Contact details found locally are still available.`;
+      console.error("[JobPilot] Resume profile extraction failed:", err.message);
+    }
+    const synced = await save();
     els.fileName.textContent = `✓ ${file.name}`;
-    // Persist immediately (local + cloud) so the user doesn't need to click Save.
-    await save();
-    showStatus("Resume uploaded, saved & synced ✓", "success");
-    setTimeout(hideStatus, 2500);
+    showStatus(
+      `Resume imported. Review Quick Details; fields not present in your resume stay blank. ` +
+      (synced ? "Saved and synced." : "Saved on this device only; cloud sync failed.") +
+      (warning ? ` ${warning}` : ""),
+      synced && !warning ? "success" : "error"
+    );
   } catch (err) {
-    console.error(err);
+    console.error("[JobPilot] Resume import failed:", err?.stack || err?.message || err);
     els.fileName.textContent = "";
     if (err?.code === "PROTECTED") {
       showStatus(
@@ -210,6 +235,7 @@ async function handleResumeUpload(event) {
 // ---------- Helpers ----------
 
 function showStatus(message, type = "info") {
+  clearTimeout(statusTimer);
   els.status.textContent = message;
   els.status.className = `status ${type}`;
   els.status.classList.remove("hidden");
@@ -251,8 +277,16 @@ async function ensureContentScript(tabId) {
 // ---------- Load saved data on open ----------
 
 async function loadSaved() {
-  // Prefer cloud data (syncs across devices); fall back to local storage.
-  const cloud = await cloudLoad();
+  const { profileSyncPending } = await chrome.storage.local.get("profileSyncPending");
+  let cloud = null;
+  if (!profileSyncPending) {
+    try {
+      cloud = await cloudLoad();
+    } catch (err) {
+      showStatus(`Cloud profile unavailable: ${err.message}. Using this device's saved profile.`, "error");
+      console.error("[JobPilot] Could not load cloud profile:", err.message);
+    }
+  }
   if (cloud) {
     els.profile.value = cloud.profileText || "";
     if (cloud.resumeText) {
@@ -310,18 +344,25 @@ async function save() {
       uploadedResumeText,
     });
     // Also push to the cloud so it syncs across devices.
-    const synced = await cloudSave({
-      structured,
-      profileText,
-      resumeText: uploadedResumeText,
-    });
+    await chrome.storage.local.set({ profileSyncPending: true });
+    let synced = false;
+    try {
+      synced = await cloudSave({ structured, profileText, resumeText: uploadedResumeText });
+    } catch (err) {
+      console.error("[JobPilot] Cloud sync failed:", err.message);
+      showStatus(`Saved on this device. Cloud sync failed: ${err.message}`, "error");
+      return false;
+    }
+    if (synced) await chrome.storage.local.remove("profileSyncPending");
     els.save.textContent = synced ? "✓ Saved & Synced" : "✓ Saved";
     showStatus(synced ? "Saved & synced ✓" : "Saved ✓", "success");
-    setTimeout(hideStatus, 1500);
+    statusTimer = setTimeout(hideStatus, 1500);
+    return synced;
   } catch (err) {
     els.save.textContent = "Save failed — retry";
     showStatus("Couldn't save. Please try again.", "error");
     console.error(err);
+    throw err;
   } finally {
     setTimeout(() => {
       els.save.textContent = originalLabel;
@@ -333,6 +374,7 @@ async function save() {
 // ---------- Fill flow ----------
 
 async function fillForm() {
+  if (fillInProgress) return;
   const typedProfile = els.profile.value.trim();
   const structured = readStructured();
   const hasStructured = Object.values(structured).some((v) => v);
@@ -355,11 +397,15 @@ async function fillForm() {
     return showStatus("Please fill in Quick Details or upload/paste your resume.", "error");
   }
 
-  await save();
+  fillInProgress = true;
   els.fill.disabled = true;
+  currentSuggestions = [];
+  currentTarget = null;
+  els.reviewSection.classList.add("hidden");
   showStatus("Scanning the page for form fields…", "info");
 
   try {
+    await save();
     const tab = await getActiveTab();
 
     // Make sure the content script is present (handles tabs opened before the
@@ -419,9 +465,11 @@ async function fillForm() {
       els.fill.disabled = false;
       return;
     }
+    if (detectResponse?.error) throw new Error(detectResponse.error);
 
     const fields = detectResponse?.fields || [];
     const jobContext = detectResponse?.jobContext || {};
+    currentTarget = { tabId: tab.id, frameId: detectResponse.frameId ?? 0, scanId: detectResponse.scanId };
 
     if (fields.length === 0) {
       showStatus("No form fields found on this page.", "error");
@@ -466,9 +514,13 @@ async function fillForm() {
       return;
     }
 
-    currentSuggestions = aiResponse.suggestions || [];
+    if (!Array.isArray(aiResponse?.suggestions) || aiResponse.suggestions.length === 0) {
+      throw new Error("No usable answers were returned. Your form has not been changed.");
+    }
+    currentSuggestions = aiResponse.suggestions;
     renderReview(currentSuggestions);
-    showStatus(`AI suggested ${currentSuggestions.length} answers. Review below.`, "success");
+    showStatus(`${currentSuggestions.length} answers ready. Review them, then click Apply to Page to fill the application.`, "success");
+    els.reviewSection.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
     showStatus(
       `Autofill failed: ${err.message}`,
@@ -476,6 +528,7 @@ async function fillForm() {
     );
     console.error(err);
   } finally {
+    fillInProgress = false;
     els.fill.disabled = false;
   }
 }
@@ -529,14 +582,21 @@ function renderReview(suggestions) {
 // ---------- Apply to page ----------
 
 async function applyAll() {
-  const tab = await getActiveTab();
+  if (!currentTarget || !currentSuggestions.length) {
+    showStatus("Generate answers for an application before applying them.", "error");
+    return;
+  }
+  const target = currentTarget;
   showStatus("Filling the form…", "info");
+  els.applyAll.disabled = true;
 
   try {
-    const result = await chrome.tabs.sendMessage(tab.id, {
+    const result = await chrome.tabs.sendMessage(target.tabId, {
       type: "APPLY_ANSWERS",
       suggestions: currentSuggestions,
-    });
+      scanId: target.scanId,
+    }, { frameId: target.frameId });
+    if (result?.error) throw new Error(result.error);
 
     // Page was reloaded/changed since we detected — markers are gone.
     if (result?.stale) {
@@ -548,10 +608,21 @@ async function applyAll() {
     }
 
     const filled = result?.filled ?? 0;
-    showStatus(`Filled ${filled} fields ✓ Review the page and submit.`, "success");
+    const failures = result?.failed || [];
+    if (!filled) {
+      throw new Error("No fields were filled. " + failures.map(item => `${item.label}: ${item.reason}`).join("; "));
+    }
+    showStatus(
+      `Filled ${filled} fields. ` +
+      (failures.length ? `${failures.length} need manual entry: ${failures.map(item => item.label).join(", ")}. ` : "") +
+      "Review the application and attach your resume manually before submitting.",
+      failures.length ? "error" : "success"
+    );
   } catch (err) {
-    showStatus("Could not apply. Reload the page and try again.", "error");
+    showStatus(`Could not apply: ${err.message}`, "error");
     console.error(err);
+  } finally {
+    els.applyAll.disabled = false;
   }
 }
 
@@ -801,6 +872,7 @@ async function refreshFillAvailability() {
 }
 
 function setFillAvailable(available, hintText) {
+  if (fillInProgress) return;
   els.fill.disabled = !available;
   els.fill.title = available ? "" : hintText;
   if (els.fillHint) {
@@ -817,7 +889,7 @@ chrome.tabs.onUpdated.addListener((_tabId, info) => {
 
 // ---------- Wire up ----------
 
-els.save.addEventListener("click", save);
+els.save.addEventListener("click", () => save().catch(err => console.error("[JobPilot] Save failed:", err.message)));
 els.fill.addEventListener("click", fillForm);
 els.applyAll.addEventListener("click", applyAll);
 els.resumeFile.addEventListener("change", handleResumeUpload);

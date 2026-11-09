@@ -54,7 +54,7 @@ foreach ($icon in @("icon16.png", "icon48.png", "icon128.png")) {
 # lib/ — pdf.js runtime files only.
 $libDest = Join-Path $stageDir "lib"
 New-Item -ItemType Directory -Path $libDest -Force | Out-Null
-foreach ($libFile in @("pdf.min.mjs", "pdf.worker.min.mjs", "jszip.min.js")) {
+foreach ($libFile in @("pdf.min.mjs", "pdf.worker.min.mjs", "jszip.min.js", "resume-profile.mjs")) {
   Copy-Item (Join-Path $root "lib\$libFile") -Destination (Join-Path $libDest $libFile)
 }
 

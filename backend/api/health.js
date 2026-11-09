@@ -2,6 +2,7 @@
 import { applyCors, handlePreflight } from "../lib/http.js";
 import { monthlyLimit } from "../lib/usage.js";
 import { listGroqModels } from "../lib/ai.js";
+import { isDbConfigured, checkProfilesTable } from "../lib/db.js";
 
 export default async function handler(req, res) {
   applyCors(req, res);
@@ -15,6 +16,15 @@ export default async function handler(req, res) {
     modelError = err.message;
   }
 
+  let profilesTable = null;
+  if (isDbConfigured()) {
+    try {
+      profilesTable = await checkProfilesTable();
+    } catch (err) {
+      profilesTable = { ok: false, error: err.message };
+    }
+  }
+
   return res.status(200).json({
     ok: true,
     service: "jobpilot-backend",
@@ -23,7 +33,8 @@ export default async function handler(req, res) {
     availableModels,
     modelError,
     authEnforced: Boolean(process.env.GOOGLE_CLIENT_ID),
-    dbConfigured: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+    dbConfigured: isDbConfigured(),
+    profilesTable,
     usageMonthlyLimit: monthlyLimit(),
     time: new Date().toISOString(),
   });

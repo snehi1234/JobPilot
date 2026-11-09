@@ -85,15 +85,14 @@ powershell -File .\build-extension.ps1   # outputs dist/jobpilot-extension.zip
 ## Tests
 
 ```bash
-node --test tests/autofill-consent.test.cjs tests/background-routing.test.cjs backend/tests/ai.test.js
+npm install
+npm test                 # unit tests (consent, routing, model failover, quotas)
+npm run test:browser     # loads the real extension in Chromium
 ```
 
-The 33 tests cover:
-- consent gating, including revoking consent mid-run
-- model selection and failover
-- quota errors passing through to the user
-- the authentication refresh path
-- backend-only routing
+The browser tests load the unpacked extension and check field values on the page, not just success messages:
+- `JOBPILOT_TEST_RESUME=<local pdf>` checks that uploading a resume fills Quick Details. The PDF is read locally, and the backend is mocked.
+- `JOBPILOT_LIVE_TEST=1` opens a live Ashby application (Plaid). It checks field labels and filled values, and blocks every non-GET request so nothing is ever submitted.
 
 ## Privacy
 

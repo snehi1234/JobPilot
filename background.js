@@ -93,6 +93,10 @@ async function backendParse(profile) {
 
 // Listen for requests from the side panel.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "FRAME_INFO") {
+    sendResponse({ frameId: sender.frameId ?? 0 });
+    return false;
+  }
   if (message.type === "OPEN_SIDE_PANEL") {
     // Open the side panel for the tab the request came from (e.g. so the user
     // can sign in / set up their profile). Must run in the user-gesture window.

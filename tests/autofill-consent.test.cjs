@@ -254,6 +254,7 @@ test("the real side-panel toggle persists consent and reports storage errors", a
     getCurrentUser: async () => null,
     console: { log() {}, error() {} },
     setTimeout: () => 1,
+    clearTimeout() {},
     chrome: {
       storage: store.storage,
       runtime: { getURL: (name) => name },

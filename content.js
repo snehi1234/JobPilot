@@ -13,6 +13,7 @@ const GROUP_ATTR = "data-jobpilot-group";
 // Registry mapping field id → metadata, so APPLY knows how to fill each one.
 // Lives for the page's lifetime (same context as detection).
 let fieldRegistry = {};
+let fieldScanId = null;
 
 // Global lock preventing two autofill operations (auto-run on page load, a
 // manual floating-button click, or a side-panel "Fill This Form" request)
@@ -137,6 +138,62 @@ function jpResolveId(id, contextEl) {
   return jpQueryOne(`#${CSS.escape(id)}`);
 }
 
+function referencedLabel(el) {
+  return (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
+    .map(id => jpResolveId(id, el)?.textContent?.trim() || "").filter(Boolean).join(" ");
+}
+
+function ownLabelText(el) {
+  if (el.labels?.length) return el.labels[0].textContent.trim();
+  if (el.id) {
+    const explicit = jpQueryOne(`label[for="${CSS.escape(el.id)}"]`, el.getRootNode());
+    if (explicit) return explicit.textContent.trim();
+  }
+  return "";
+}
+
+function nearbyQuestion(el, members = [el]) {
+  const own = new Set(members.map(ownLabelText).filter(Boolean));
+  const isOwn = (label) =>
+    members.some(m => label.contains(m) || (m.id && label.htmlFor === m.id)) ||
+    own.has(label.textContent.trim());
+  for (let node = el.parentElement, depth = 0; node && depth < 6; node = node.parentElement, depth++) {
+    if (node.id) {
+      const label = jpQueryOne(`label[for="${CSS.escape(node.id)}"]`, node.getRootNode());
+      if (label && !isOwn(label)) return label.textContent.trim();
+    }
+    const label = Array.from(node.children).find(child =>
+      child.matches("label, legend, .ashby-application-form-question-title") &&
+      !isOwn(child) && !child.querySelector("input, select, textarea, button")
+    );
+    if (label?.textContent.trim()) return label.textContent.trim();
+    if (node.matches("form, body")) break;
+  }
+  return "";
+}
+
+// Question text for a set of radio/checkbox options. Prefers descriptive text
+// inside the smallest container holding every option (e.g. an SMS-consent
+// statement nested under a phone field), then the nearest question title.
+function groupQuestion(members) {
+  let container = members[0].parentElement;
+  while (container && !members.every(m => container.contains(m))) container = container.parentElement;
+  const optionTexts = members.map(m => ownLabelText(m) || getLabelForElement(m)).filter(Boolean);
+  const onlyMembers = (node) =>
+    Array.from(node.querySelectorAll("input, select, textarea")).every(c => members.includes(c));
+  for (let node = container, depth = 0; node && depth < 4 && !node.matches("form, body") && onlyMembers(node); node = node.parentElement, depth++) {
+    let text = node.innerText || "";
+    for (const option of optionTexts) text = text.split(option).join(" ");
+    text = text.replace(/\s+/g, " ").trim();
+    if (text.length >= 8 && text.length <= 600) return text.slice(0, 200);
+  }
+  if (container && !container.matches("form, body")) {
+    const question = nearbyQuestion(container, members);
+    if (question) return question;
+  }
+  return getGroupLabel(members[0]);
+}
+
 // ---------- Visibility ----------
 
 function isVisible(el) {
@@ -170,10 +227,12 @@ function getLabelForElement(el) {
   if (parentLabel) return parentLabel.innerText.trim();
 
   if (el.getAttribute("aria-label")) return el.getAttribute("aria-label").trim();
-  const labelledBy = el.getAttribute("aria-labelledby");
-  if (labelledBy) {
-    const ref = jpResolveId(labelledBy, el);
-    if (ref) return ref.innerText.trim();
+  const referenced = referencedLabel(el);
+  if (referenced) return referenced;
+  const nearby = nearbyQuestion(el);
+  if (nearby) {
+    const part = el.tagName === "SELECT" ? el.options[0]?.textContent?.match(/^(month|year)\b/i)?.[1] : "";
+    return part ? `${nearby} (${part.toLowerCase()})` : nearby;
   }
   if (el.placeholder) return el.placeholder.trim();
 
@@ -192,13 +251,12 @@ function getGroupLabel(el) {
   }
   const group = el.closest("[role='radiogroup'], [role='group']");
   if (group) {
-    const lb = group.getAttribute("aria-labelledby");
-    if (lb) {
-      const ref = jpResolveId(lb, el);
-      if (ref) return ref.innerText.trim();
-    }
+    const label = referencedLabel(group);
+    if (label) return label;
     if (group.getAttribute("aria-label")) return group.getAttribute("aria-label").trim();
   }
+  const nearby = nearbyQuestion(el);
+  if (nearby) return nearby;
   // Greenhouse wraps each question in a container; find a nearby label/heading.
   const container = el.closest("div");
   if (container) {
@@ -219,6 +277,12 @@ function getGroupLabel(el) {
   }
 
   return getLabelForElement(el);
+}
+
+function checkboxLabel(el) {
+  const option = getLabelForElement(el);
+  const question = nearbyQuestion(el);
+  return question && question !== option ? `${question}: ${option}` : option;
 }
 
 // ---------- react-select detection ----------
@@ -315,6 +379,7 @@ function scrapeJobDescription() {
 
 function detectFields() {
   fieldRegistry = {};
+  fieldScanId = crypto.randomUUID();
   const fields = [];
   let index = 0;
   const claimed = new WeakSet(); // inputs already represented by a group/combobox
@@ -346,8 +411,8 @@ function detectFields() {
       claimed.add(r);
     });
     const options = radios.map((r) => getLabelForElement(r)).filter(Boolean);
-    const groupLabel = getGroupLabel(radios[0]);
-    fieldRegistry[id] = { kind: "radio", label: groupLabel, labelIndex: nextLabelIndex("radio", groupLabel) };
+    const groupLabel = groupQuestion(radios);
+    fieldRegistry[id] = { kind: "radio", label: groupLabel, name: radios[0].name, labelIndex: nextLabelIndex("radio", groupLabel) };
     fields.push({
       id,
       kind: "radio",
@@ -362,7 +427,7 @@ function detectFields() {
     if (!isVisible(c) || claimed.has(c)) return;
     const id = String(index++);
     c.setAttribute(FIELD_ATTR, id);
-    const label = getLabelForElement(c);
+    const label = checkboxLabel(c);
     fieldRegistry[id] = { kind: "checkbox", label, labelIndex: nextLabelIndex("checkbox", label) };
     fields.push({
       id,
@@ -422,6 +487,7 @@ function detectFields() {
     return (
       txt.length > 0 &&
       txt.length <= 24 &&
+      (b.tagName !== "BUTTON" || b.type !== "submit") &&
       !/^(submit|apply|next|back|attach|upload|browse|continue|save|add|remove|cancel|close)$/i.test(txt)
     );
   });
@@ -479,7 +545,6 @@ function detectFields() {
     "url",
     "number",
     "search",
-    "password",
     "",
   ]);
   const NON_TEXT = new Set([
@@ -571,7 +636,7 @@ function fillText(el, value) {
   el.focus({ preventScroll: true });
   setNativeValue(el, value);
   fireEvents(el);
-  return true;
+  return el.value === value;
 }
 
 // Groups of interchangeable phrasings so short AI answers like "N/A" or
@@ -595,7 +660,7 @@ function normalizeForMatch(text) {
 
 function synonymGroupOf(text) {
   const t = normalizeForMatch(text);
-  return SYNONYM_GROUPS.find((group) => group.some((g) => t === g || t.includes(g)));
+  return SYNONYM_GROUPS.find(group => group.includes(t));
 }
 
 // Word-overlap fuzzy score: fraction of the shorter string's significant
@@ -616,7 +681,7 @@ function wordOverlapScore(a, b) {
 
 function fillNativeSelect(el, value) {
   const target = value.trim().toLowerCase();
-  const options = Array.from(el.options);
+  const options = Array.from(el.options).filter(option => !option.disabled && option.value !== "");
 
   // 1) Exact match on text or value.
   let match = options.find(
@@ -628,7 +693,7 @@ function fillNativeSelect(el, value) {
   if (!match) {
     match = options.find((o) => {
       const opt = o.textContent.trim().toLowerCase();
-      return opt.includes(target) || (target.length > 3 && target.includes(opt));
+      return target.length > 3 && opt.length > 3 && (opt.includes(target) || target.includes(opt));
     });
   }
 
@@ -658,15 +723,20 @@ function fillNativeSelect(el, value) {
   }
 
   if (match) {
-    el.value = match.value;
+    setNativeValue(el, match.value);
     fireEvents(el);
-    return true;
+    return el.value === match.value;
   }
   return false;
 }
 
 function fillRadio(groupId, value) {
-  const radios = jpQueryAll(`[${GROUP_ATTR}="${CSS.escape(groupId)}"]`);
+  let radios = jpQueryAll(`[${GROUP_ATTR}="${CSS.escape(groupId)}"]`);
+  if (!radios.length) {
+    radios = jpQueryAll("input[type='radio']").filter(el =>
+      isVisible(el) && fieldRegistry[groupId]?.name && el.name === fieldRegistry[groupId].name
+    );
+  }
   const target = value.trim().toLowerCase();
   let match = radios.find((r) => getLabelForElement(r).trim().toLowerCase() === target);
   if (!match) match = radios.find((r) => getLabelForElement(r).trim().toLowerCase().includes(target));
@@ -675,17 +745,17 @@ function fillRadio(groupId, value) {
   }
   if (match) {
     match.click();
-    match.checked = true;
     fireEvents(match);
-    return true;
+    return match.checked;
   }
   return false;
 }
 
 function fillCheckbox(el, value) {
+  if (!/^(yes|no|true|false|checked|unchecked|on|off|1|0)$/i.test(value.trim())) return false;
   const wantChecked = /^(yes|true|checked|on|1)$/i.test(value.trim());
   if (el.checked !== wantChecked) el.click();
-  return true;
+  return el.checked === wantChecked;
 }
 function fillButtonGroup(groupId, value) {
   const buttons = jpQueryAll(`[${GROUP_ATTR}="${CSS.escape(groupId)}"]`);
@@ -701,9 +771,6 @@ function fillButtonGroup(groupId, value) {
     match.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     match.click();
-    // Mark selected state for aria-based widgets.
-    match.setAttribute("aria-pressed", "true");
-    match.setAttribute("aria-checked", "true");
     return true;
   }
   return false;
@@ -713,31 +780,32 @@ async function fillCombobox(input, value) {
   input.focus({ preventScroll: true }); // see note in fillText() — avoid page-jumping scroll
   if (control) control.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
   input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  input.click();
   await sleep(150);
 
   setNativeValue(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
-  await sleep(350);
-
   const target = value.trim().toLowerCase();
-  const options = jpQueryAll(
-    "[role='option'], [class*='select__option'], [class*='option']"
-  ).filter((o) => o.offsetParent !== null && o.textContent.trim());
-
-  const match =
-    options.find((o) => o.textContent.trim().toLowerCase() === target) ||
-    options.find((o) => o.textContent.trim().toLowerCase().includes(target)) ||
-    options[0];
-
-  if (match) {
-    match.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    match.click();
+  for (let attempt = 0; attempt < 20; attempt++) {
     await sleep(100);
-    return true;
+    const controlled = input.getAttribute("aria-controls");
+    const list = controlled ? jpResolveId(controlled, input) : null;
+    const options = jpQueryAll("[role='option'], [class*='select__option'], [class*='option']", list || document)
+      .filter(option => isVisible(option) && option.textContent.trim() && option.getAttribute("aria-disabled") !== "true");
+    const match =
+      options.find(option => option.textContent.trim().toLowerCase() === target) ||
+      options.find(option => target.length > 3 && option.textContent.trim().toLowerCase().includes(target));
+    if (match) {
+      match.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      match.click();
+      await sleep(100);
+      return input.value.trim().toLowerCase().includes(target) ||
+        control?.textContent?.trim().toLowerCase().includes(target) || false;
+    }
   }
 
-  input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", keyCode: 13 }));
+  input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
   return false;
 }
 
@@ -774,10 +842,10 @@ function jpFindByLabelFallback(meta) {
 
   const candidates = jpElementsForKind(meta.kind).filter(isVisible);
   const matches = candidates.filter(
-    (el) => (getLabelForElement(el) || "").trim().toLowerCase() === wantLabel
+    (el) => (meta.kind === "checkbox" ? checkboxLabel(el) : getLabelForElement(el)).trim().toLowerCase() === wantLabel
   );
   if (matches.length === 0) return null;
-  return matches[meta.labelIndex] ?? matches[0];
+  return matches[meta.labelIndex] ?? null;
 }
 
 // Look up a tagged field element, falling back to a label-based re-lookup
@@ -798,55 +866,48 @@ async function applyAnswers(suggestions) {
   // If the registry is empty, the page was reloaded/navigated since detection,
   // so our field markers are gone. Signal the panel to re-run detection.
   const registryEmpty = Object.keys(fieldRegistry).length === 0;
-  const anyTagged = jpQueryOne(`[${FIELD_ATTR}], [${GROUP_ATTR}]`);
-  if (registryEmpty || !anyTagged) {
+  if (registryEmpty) {
     console.warn("[JobPilot] Apply called but no tagged fields — page likely reloaded.");
     return { filled: 0, stale: true };
   }
 
   let filled = 0;
+  const failed = [];
 
   for (const s of suggestions) {
-    if (!s.value) continue;
-    // Decode any HTML entities (e.g. "&amp;" → "&") the model may have emitted.
-    s.value = decodeEntities(s.value);
-    const meta = fieldRegistry[s.id] || {};
+    if (s?.value == null || s.value === "") continue;
+    const id = String(s.id);
+    const meta = fieldRegistry[id];
+    const label = meta?.label || s.label || `Field ${id}`;
 
     try {
+      if (!meta) throw new Error("The answer does not match a detected field.");
+      if (!["string", "number", "boolean"].includes(typeof s.value)) {
+        throw new Error("The AI returned an unsupported answer type.");
+      }
+      const value = decodeEntities(typeof s.value === "boolean" ? (s.value ? "Yes" : "No") : String(s.value));
+      let ok = false;
       if (meta.kind === "radio") {
-        if (fillRadio(s.id, s.value)) filled++;
-        continue;
-      }
-      if (meta.kind === "buttongroup") {
-        if (fillButtonGroup(s.id, s.value)) filled++;
-        continue;
-      }
-
-      const el = jpResolveField(s.id, meta);
-      if (!el) {
-        console.warn(
-          `[JobPilot] Could not locate field "${s.label}" (id ${s.id}) to fill — it may have been removed/re-rendered.`
-        );
-        continue;
-      }
-
-      if (meta.kind === "combobox") {
-        if (await fillCombobox(el, s.value)) filled++;
-      } else if (meta.kind === "checkbox") {
-        if (fillCheckbox(el, s.value)) filled++;
-      } else if (el.tagName === "SELECT") {
-        const ok = fillNativeSelect(el, s.value);
-        if (ok) filled++;
-        else
-          console.warn(
-            `[JobPilot] Could not match select option for "${s.label}" — AI value: "${s.value}", available options:`,
-            Array.from(el.options).map((o) => o.textContent.trim())
-          );
+        ok = fillRadio(id, value);
+      } else if (meta.kind === "buttongroup") {
+        ok = fillButtonGroup(id, value);
       } else {
-        if (fillText(el, s.value)) filled++;
+        const el = jpResolveField(id, meta);
+        if (!el) throw new Error("The field was removed or changed.");
+        if (meta.kind === "combobox") ok = await fillCombobox(el, value);
+        else if (meta.kind === "checkbox") ok = fillCheckbox(el, value);
+        else if (el.tagName === "SELECT") ok = fillNativeSelect(el, value);
+        else {
+          ok = fillText(el, value);
+          await sleep(80);
+          ok = ok && jpResolveField(id, meta)?.value === value;
+        }
       }
+      if (!ok) throw new Error("The page did not accept the answer or no matching option was found.");
+      filled++;
     } catch (err) {
-      console.warn("[JobPilot] Failed to fill field", s, err);
+      failed.push({ id, label, reason: err.message });
+      console.warn(`[JobPilot] Could not fill "${label}": ${err.message}`);
     }
     // Brief pause between fields so a re-render triggered by this fill
     // (common on React-based forms) settles before we look up the next
@@ -855,7 +916,7 @@ async function applyAnswers(suggestions) {
     await sleep(80);
   }
 
-  return { filled, stale: false };
+  return { filled, stale: false, failed };
 }
 
 // ---------- Repeatable sections ----------
@@ -1240,21 +1301,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // First expand any repeatable "Add Experience / Add Education" sections so
     // their hidden fields exist, THEN detect everything.
-    expandRepeatableSections(message.counts || {}, message.parsedEntries || null).then((expanded) => {
+    expandRepeatableSections(message.counts || {}, message.parsedEntries || null).then(async (expanded) => {
       const fields = detectFields();
       const jobContext = scrapeJobContext();
+      const { frameId } = await chrome.runtime.sendMessage({ type: "FRAME_INFO" });
       console.log(`[JobPilot] Expanded ${expanded} section(s).`);
       console.log(`[JobPilot] Detected ${fields.length} fields:`, fields);
-      console.log(`[JobPilot] Job context:`, jobContext);
-      sendResponse({ fields, jobContext });
+      sendResponse({ fields, jobContext, scanId: fieldScanId, frameId });
+    }).catch(err => {
+      jpAutofillInProgress = false;
+      console.error("[JobPilot] Field detection failed:", err.message);
+      sendResponse({ error: `Could not read the form: ${err.message}` });
     });
     return true; // async response
   }
   if (message.type === "APPLY_ANSWERS") {
+    if (message.scanId && message.scanId !== fieldScanId) {
+      sendResponse({ filled: 0, stale: true });
+      return false;
+    }
     applyAnswers(message.suggestions || []).then((result) => {
       console.log(`[JobPilot] Filled ${result.filled} fields. stale=${result.stale}`);
       jpAutofillInProgress = false; // release the lock taken in DETECT_FIELDS
       sendResponse(result);
+    }).catch(err => {
+      jpAutofillInProgress = false;
+      console.error("[JobPilot] Applying answers failed:", err.message);
+      sendResponse({ error: err.message });
     });
     return true; // async response
   }
@@ -1466,7 +1539,6 @@ async function runAutofillFromButton(isAuto = false) {
       if (countResp?.entries) parsedEntries = countResp.entries;
     }
     console.log("[JobPilot] Resume parse — counts:", counts);
-    console.log("[JobPilot] Resume parse — parsed entries:", parsedEntries);
 
     if (!(await checkAutofillConsent(isAuto))) return;
     jpToast("🔍 Scanning the form fields…", "info");
@@ -1507,8 +1579,6 @@ async function runAutofillFromButton(isAuto = false) {
       structured,
       parsedEntries: reliableEntries,
     });
-    console.log("[JobPilot] parsedEntries sent to AI (after reliability check):", reliableEntries);
-    console.log("[JobPilot] AI response:", aiResponse);
 
     if (aiResponse?.error) {
       // Background.js already retries once on a genuine 401 before giving up,
@@ -1524,14 +1594,22 @@ async function runAutofillFromButton(isAuto = false) {
 
     if (!(await checkAutofillConsent(isAuto))) return;
     jpToast("✍️ Writing answers into the form…", "info");
-    const suggestions = aiResponse.suggestions || [];
-    console.log(
-      `[JobPilot] Applying ${suggestions.length} suggestion(s):`,
-      suggestions.map((s) => ({ id: s.id, label: s.label, value: s.value }))
-    );
+    const suggestions = aiResponse.suggestions;
+    if (!Array.isArray(suggestions) || !suggestions.length) {
+      throw new Error("No usable answers were returned. The form has not been changed.");
+    }
     const result = await applyAnswers(suggestions);
     console.log(`[JobPilot] Fill result — filled: ${result.filled}, stale: ${result.stale}`);
-    jpToast(`✓ Filled ${result.filled} fields. Review & attach your resume.`, "success");
+    const failures = result.failed || [];
+    if (!result.filled) {
+      throw new Error("No fields were filled. " + failures.map(item => `${item.label}: ${item.reason}`).join("; "));
+    }
+    jpToast(
+      `Filled ${result.filled} fields. ` +
+      (failures.length ? `${failures.length} need manual entry: ${failures.map(item => item.label).join(", ")}. ` : "") +
+      "Review the application and attach your resume.",
+      failures.length ? "error" : "success"
+    );
   } catch (err) {
     console.error("[JobPilot] Autofill failed:", err);
     // Happens when the extension was reloaded/updated while this page was

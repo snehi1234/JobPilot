@@ -61,7 +61,14 @@ test("Plaid: floating autofill writes and retains contact fields without submitt
     event.preventDefault();
     event.stopImmediatePropagation();
   }, true));
+  api.generateDelayMs = 3000; // simulate a slow AI response
+  const clickedAt = Date.now();
   await job.locator("#jobpilot-fab").getByRole("button", { name: "Autofill" }).click();
+  // Profile fields must appear before the (slow) AI responds.
+  await expect(job.locator("#_systemfield_name")).toHaveValue("Alex Example", { timeout: 2500 });
+  await expect(job.locator("#_systemfield_email")).toHaveValue(profile.email, { timeout: 500 });
+  const instantMs = Date.now() - clickedAt;
+  expect(instantMs).toBeLessThan(2500);
   const progress = async () => ({
     generated: api.calls.filter(call => call.endpoint === "/api/generate").length,
     endpoints: api.calls.map(call => call.endpoint),
@@ -88,7 +95,7 @@ test("Plaid: floating autofill writes and retains contact fields without submitt
   expect(new Set(checkboxLabels).size).toBe(checkboxLabels.length);
   await expect(job.locator("#_systemfield_email")).toHaveValue(profile.email);
   await expect(job.getByPlaceholder("Search schools...")).toHaveValue(/Maulana Azad National Institute of Technology/, { timeout: 20000 });
-  await expect.poll(async () => (await job.locator("#jobpilot-toast").textContent().catch(() => "")) || "", { timeout: 30000 }).toMatch(/Filled|failed/);
+  await expect.poll(async () => (await job.locator("#jobpilot-toast").textContent().catch(() => "")) || "", { timeout: 30000 }).toMatch(/✓ Filled|failed|Couldn't/);
   console.log("Toast:", await job.locator("#jobpilot-toast").textContent(), "| warnings:", JSON.stringify(api.errors));
   await expect(job.getByPlaceholder("Start typing...")).toHaveValue(/Seattle/, { timeout: 20000 });
   await expect(job.getByLabel("Phone Number", { exact: false })).toHaveValue(profile.phone);
@@ -103,4 +110,20 @@ test("Plaid: floating autofill writes and retains contact fields without submitt
     contactFieldsRetained: true,
     blockedNonGetRequests: submissions,
   }));
+  console.log("Profile fields filled in", instantMs, "ms (AI delayed 3000 ms)");
+
+  // Second application: remembered answers fill instantly; the AI is asked
+  // only about questions it hasn't answered before.
+  api.generateDelayMs = 0;
+  await job.reload();
+  await expect(job.locator("#_systemfield_name")).toBeVisible({ timeout: 30000 });
+  await job.evaluate(() => document.addEventListener("submit", event => { event.preventDefault(); event.stopImmediatePropagation(); }, true));
+  await job.locator("#jobpilot-fab").getByRole("button", { name: "Autofill" }).click();
+  await expect(job.getByLabel("Current/Last Company", { exact: false })).toHaveValue("Example Inc", { timeout: 3000 });
+  await expect.poll(() => api.calls.filter(call => call.endpoint === "/api/generate").length, { timeout: 15000 }).toBe(2);
+  const secondFields = api.calls.filter(call => call.endpoint === "/api/generate")[1].body.fields.map(field => field.label);
+  for (const remembered of ["School", "Degree", "Field of Study", "Current/Last Company", "Name", "Email"]) {
+    expect(secondFields).not.toContain(remembered);
+  }
+  console.log(`Second autofill sent ${secondFields.length} fields to the AI (first: ${fields.length}).`);
 });

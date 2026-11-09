@@ -48,6 +48,7 @@ const test = base.extend({
       } else if (endpoint === "/api/parse-resume") {
         response = { counts: { experience: 1, education: 1 }, entries, structured: api.parseStructured === undefined ? profile : api.parseStructured };
       } else if (endpoint === "/api/generate") {
+        if (api.generateDelayMs) await new Promise((r) => setTimeout(r, api.generateDelayMs));
         const values = {
           name: `${profile.firstName} ${profile.lastName}`,
           email: profile.email,

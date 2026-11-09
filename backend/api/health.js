@@ -1,6 +1,6 @@
 // api/health.js — GET /api/health — quick check that the server + key are set.
 import { applyCors, handlePreflight } from "../lib/http.js";
-import { monthlyLimit } from "../lib/usage.js";
+import { monthlyLimit, dailyLimit } from "../lib/usage.js";
 import { listGroqModels } from "../lib/ai.js";
 import { isDbConfigured, checkProfilesTable } from "../lib/db.js";
 
@@ -36,6 +36,7 @@ export default async function handler(req, res) {
     dbConfigured: isDbConfigured(),
     profilesTable,
     usageMonthlyLimit: monthlyLimit(),
+    usageDailyLimit: dailyLimit(),
     time: new Date().toISOString(),
   });
 }

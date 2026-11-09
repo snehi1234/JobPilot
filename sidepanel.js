@@ -448,7 +448,6 @@ async function fillForm() {
         `, ${counts.education} education. Preparing form…`,
       "info"
     );
-    await new Promise((r) => setTimeout(r, 2500)); // pause so you can read it
 
     // 1. Ask the content script to detect fields (expands repeatable sections).
     const detectResponse = await chrome.tabs.sendMessage(tab.id, {
@@ -612,11 +611,18 @@ async function applyAll() {
     if (!filled) {
       throw new Error("No fields were filled. " + failures.map(item => `${item.label}: ${item.reason}`).join("; "));
     }
+    const short = (label) => {
+      const text = String(label || "").replace(/\s+/g, " ").trim();
+      return text.length > 45 ? `${text.slice(0, 42)}…` : text;
+    };
     showStatus(
-      `Filled ${filled} fields. ` +
-      (failures.length ? `${failures.length} need manual entry: ${failures.map(item => item.label).join(", ")}. ` : "") +
+      `✓ Filled ${filled} fields. ` +
+      (failures.length
+        ? `Please complete ${failures.length} yourself: ${failures.slice(0, 4).map(item => short(item.label)).join(", ")}` +
+          `${failures.length > 4 ? ` and ${failures.length - 4} more` : ""}. `
+        : "") +
       "Review the application and attach your resume manually before submitting.",
-      failures.length ? "error" : "success"
+      failures.length ? "note" : "success"
     );
   } catch (err) {
     showStatus(`Could not apply: ${err.message}`, "error");
@@ -736,7 +742,7 @@ async function deleteMyData() {
   els.deleteData.disabled = true;
   try {
     await cloudDelete();
-    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled", "parseCache"]);
+    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled", "parseCache", "answerMemory"]);
     clearFormUI();
     showStatus("Your saved profile and resume have been deleted ✓", "success");
     setTimeout(hideStatus, 2500);

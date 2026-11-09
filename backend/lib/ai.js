@@ -101,6 +101,10 @@ async function callGroq(prompt, { maxOutputTokens, temperature }) {
           temperature: temperature ?? 0.2,
           max_tokens: Math.min(maxOutputTokens ?? 8192, 32768),
           response_format: { type: "json_object" },
+          // gpt-oss "thinks" before answering; reasoning tokens count against
+          // the per-minute token limit and add latency. Form filling needs
+          // little reasoning.
+          ...(model.startsWith("openai/gpt-oss") ? { reasoning_effort: "low" } : {}),
         }),
       });
 

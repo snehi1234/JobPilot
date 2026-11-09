@@ -12,7 +12,7 @@ import {
   readJsonBody,
 } from "../lib/http.js";
 import { getUserFromRequest } from "../lib/auth.js";
-import { checkAndIncrementUsage } from "../lib/usage.js";
+import { checkAndIncrementUsage, usageLimitMessage } from "../lib/usage.js";
 
 // Count experience/education entries directly from resume text using date
 // ranges, as a reliable floor independent of the AI parse.
@@ -81,7 +81,7 @@ export default async function handler(req, res) {
   const usage = await checkAndIncrementUsage(user?.sub);
   if (!usage.allowed) {
     return res.status(429).json({
-      error: `Monthly usage limit reached (${usage.limit} AI requests). It resets at the start of next month.`,
+      error: usageLimitMessage(usage),
       usageLimitReached: true,
     });
   }

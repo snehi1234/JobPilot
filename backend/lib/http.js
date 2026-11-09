@@ -30,7 +30,7 @@ export function handlePreflight(req, res) {
 
 // --- Simple sliding-window rate limiter (per key, in-memory) ---
 const WINDOW_MS = 60_000; // 1 minute
-const MAX_PER_WINDOW = 20; // requests per key per window
+const MAX_PER_WINDOW = 6; // AI requests per user per minute (burst guard)
 const hits = new Map(); // key -> number[] (timestamps)
 
 export function rateLimit(key) {

@@ -42,10 +42,13 @@ function harness(backendUrl, responses) {
       },
     },
   });
+  const engine = readFileSync(path.join(__dirname, "..", "lib", "answer-engine.mjs"), "utf8").replace(/^export /gm, "");
+  vm.runInContext(engine, context);
   const source = readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
   vm.runInContext(source.replace(/^import .*;\r?$/gm, ""), context);
   return {
     calls,
+    store,
     get refreshes() { return refreshes; },
     request: (message) => new Promise((resolve) => onMessage(message, {}, resolve)),
   };
@@ -108,4 +111,32 @@ test("resume parsing is cached so repeat autofills make one AI call", async () =
   assert.deepEqual(first, parsed);
   assert.deepEqual(second, parsed);
   assert.equal(h.calls.length, 1);
+});
+
+test("answers come from profile and memory first; only unknown fields reach the AI", async () => {
+  const h = harness("https://jobpilot.example.invalid", [
+    { status: 200, body: { suggestions: [{ id: "2", label: "Are you authorized?", value: "Yes", confidence: "high" }] } },
+  ]);
+  const fields = [
+    { id: "1", label: "Email", kind: "text", occurrence: 0 },
+    { id: "2", label: "Are you authorized?", kind: "radio", options: ["Yes", "No"], occurrence: 0 },
+  ];
+  const message = { type: "GENERATE_ANSWERS", fields, profile: "Synthetic", structured: { email: "alex@example.com" }, jobContext: {} };
+
+  const local = await h.request({ ...message, localOnly: true });
+  assert.equal(JSON.stringify(local.suggestions.map((s) => s.value)), JSON.stringify(["alex@example.com"]));
+  assert.equal(JSON.stringify(local.pending), JSON.stringify(["2"]));
+  assert.equal(h.calls.length, 0, "localOnly never calls the backend");
+
+  const first = await h.request(message);
+  assert.equal(h.calls.length, 1);
+  assert.equal(JSON.stringify(JSON.parse(h.calls[0].options.body).fields.map((f) => f.id)), JSON.stringify(["2"]));
+  assert.equal(first.suggestions.length, 2);
+
+  const second = await h.request(message);
+  assert.equal(h.calls.length, 1, "remembered answer avoids a second AI call");
+  assert.equal(JSON.stringify(second.suggestions.map((s) => s.source)), JSON.stringify(["profile", "memory"]));
+
+  const changed = await h.request({ ...message, structured: { email: "new@example.com" }, localOnly: true });
+  assert.equal(JSON.stringify(changed.pending), JSON.stringify(["2"]), "editing the profile clears remembered answers");
 });

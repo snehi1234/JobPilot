@@ -22,7 +22,10 @@ export function buildFillPrompt(fields, profile, jobContext = {}, structured = {
 
   const jobInfo = `Job title: ${jobContext.title || "unknown"}
 Job location: ${jobContext.location || "unknown"}
-Company: ${jobContext.company || "unknown"}`;
+Company: ${jobContext.company || "unknown"}
+Today's date: ${new Date().toISOString().slice(0, 10)} (use MM/DD/YYYY when a field asks for today's date)${
+    jobContext.sourceHint ? `\nThe candidate found this job via: ${jobContext.sourceHint}` : ""
+  }`;
 
   // Cap the job description to keep the prompt within provider token limits.
   const desc = (jobContext.description || "").slice(0, 1500);

@@ -288,7 +288,9 @@ function checkboxLabel(el) {
 // ---------- react-select detection ----------
 
 function isComboboxInput(el) {
-  return el.getAttribute("role") === "combobox";
+  // Date pickers often use role="combobox" with a dialog popup; they accept
+  // typed dates, so treat them as text fields.
+  return el.getAttribute("role") === "combobox" && el.getAttribute("aria-haspopup") !== "dialog";
 }
 
 function comboboxContainer(input) {
@@ -344,8 +346,20 @@ function scrapeJobContext() {
     location,
     company,
     description,
+    sourceHint: applicationSourceHint(),
     url: location ? location : window.location.hostname,
   };
+}
+
+// Where the user came from, for "How did you hear about us?" questions.
+function applicationSourceHint() {
+  const text = `${location.href} ${document.referrer}`.toLowerCase();
+  const sources = [
+    ["linkedin", "LinkedIn"], ["indeed", "Indeed"], ["glassdoor", "Glassdoor"],
+    ["ziprecruiter", "ZipRecruiter"], ["handshake", "Handshake"], ["wellfound", "Wellfound"],
+    ["builtin", "Built In"], ["dice.com", "Dice"],
+  ];
+  return sources.find(([needle]) => text.includes(needle))?.[1] || "";
 }
 
 // Grab the job description text so the AI can tailor answers to this role.
@@ -440,7 +454,7 @@ function detectFields() {
 
   // 3) react-select comboboxes.
   jpQueryAll("input[role='combobox']").forEach((cb) => {
-    if (!isVisible(cb) || claimed.has(cb)) return;
+    if (!isVisible(cb) || claimed.has(cb) || !isComboboxInput(cb)) return;
     claimed.add(cb);
     const id = String(index++);
     cb.setAttribute(FIELD_ATTR, id);
@@ -594,6 +608,9 @@ function detectFields() {
     });
   });
 
+  // Repeated questions (e.g. two "School" fields) are numbered so remembered
+  // answers map to the same position on other forms.
+  fields.forEach((f) => { f.occurrence = fieldRegistry[f.id]?.labelIndex ?? 0; });
   return fields;
 }
 
@@ -875,7 +892,7 @@ function jpElementsForKind(kind) {
     case "select":
       return jpQueryAll("select");
     case "combobox":
-      return jpQueryAll("input[role='combobox']");
+      return jpQueryAll("input[role='combobox']").filter(isComboboxInput);
     case "checkbox":
       return jpQueryAll("input[type='checkbox']");
     case "text":
@@ -952,7 +969,7 @@ async function applyAnswers(suggestions) {
         else if (el.tagName === "SELECT") ok = fillNativeSelect(el, value);
         else {
           ok = fillText(el, value);
-          await sleep(80);
+          await sleep(30);
           ok = ok && jpResolveField(id, meta)?.value === value;
         }
       }
@@ -966,7 +983,7 @@ async function applyAnswers(suggestions) {
     // (common on React-based forms) settles before we look up the next
     // field — reduces (but doesn't eliminate, hence the fallback above)
     // the chance of hitting a mid-re-render DOM state.
-    await sleep(80);
+    await sleep(20);
   }
 
   return { filled, stale: false, failed };
@@ -1492,6 +1509,20 @@ function jpPositionToastNearFab(toast) {
   toast.style.left = `${left}px`;
 }
 
+// Short, friendly summary. Fields left for the user are a normal outcome
+// (e.g. questions only they can answer), not an error.
+function fillSummary(filled, failed) {
+  const short = (label) => {
+    const text = String(label || "").replace(/\s+/g, " ").trim();
+    return text.length > 45 ? `${text.slice(0, 42)}…` : text;
+  };
+  const names = failed.slice(0, 4).map((f) => short(f.label)).join(", ");
+  const more = failed.length > 4 ? ` and ${failed.length - 4} more` : "";
+  return `✓ Filled ${filled} fields.` +
+    (failed.length ? ` Please complete ${failed.length} yourself: ${names}${more}.` : "") +
+    " Review the application and attach your resume.";
+}
+
 function jpToast(message, type = "info") {
   let toast = document.getElementById("jobpilot-toast");
   if (!toast) {
@@ -1512,12 +1543,13 @@ function jpToast(message, type = "info") {
     document.body.appendChild(toast);
   }
   jpPositionToastNearFab(toast);
-  const colors = { info: "#4a3aff", success: "#166534", error: "#991b1b" };
+  const colors = { info: "#4a3aff", success: "#166534", error: "#991b1b", note: "#334155" };
   toast.style.background = colors[type] || colors.info;
   toast.textContent = message;
   toast.style.display = "block";
   clearTimeout(toast._hideTimer);
-  toast._hideTimer = setTimeout(() => (toast.style.display = "none"), 4000);
+  const duration = type === "note" || message.length > 120 ? 10000 : 4000;
+  toast._hideTimer = setTimeout(() => (toast.style.display = "none"), duration);
 }
 
 // Orchestrate the full autofill flow from the page (mirrors the side panel).
@@ -1624,45 +1656,66 @@ async function runAutofillFromButton(isAuto = false) {
         : null;
 
     if (!(await checkAutofillConsent(isAuto))) return;
-    const aiResponse = await chrome.runtime.sendMessage({
+    const request = {
       type: "GENERATE_ANSWERS",
       fields,
       profile: combinedProfile,
       jobContext,
       structured,
       parsedEntries: reliableEntries,
-    });
+    };
 
-    if (aiResponse?.error) {
-      // Background.js already retries once on a genuine 401 before giving up,
-      // so if we still see an auth error here, the session truly needs a
-      // fresh sign-in.
-      if (/auth|401|sign/i.test(aiResponse.error)) {
-        await openPanelOrToast("Your session expired — please sign in again.");
-      } else {
-        jpToast(`Couldn't autofill: ${aiResponse.error}`, "error");
-      }
-      return;
-    }
-
+    // Phase 1: fill everything known from the profile or remembered answers
+    // immediately, without waiting for the AI.
+    const local = await chrome.runtime.sendMessage({ ...request, localOnly: true });
+    if (local?.error) throw new Error(local.error);
     if (!(await checkAutofillConsent(isAuto))) return;
-    jpToast("✍️ Writing answers into the form…", "info");
-    const suggestions = aiResponse.suggestions;
-    if (!Array.isArray(suggestions) || !suggestions.length) {
-      throw new Error("No usable answers were returned. The form has not been changed.");
+    let total = { filled: 0, failed: [] };
+    if (local.suggestions?.length) {
+      const first = await applyAnswers(local.suggestions);
+      total = { filled: first.filled, failed: first.failed || [] };
     }
-    const result = await applyAnswers(suggestions);
-    console.log(`[JobPilot] Fill result — filled: ${result.filled}, stale: ${result.stale}`);
-    const failures = result.failed || [];
-    if (!result.filled) {
-      throw new Error("No fields were filled. " + failures.map(item => `${item.label}: ${item.reason}`).join("; "));
+
+    // Phase 2: ask the AI about the remaining fields, plus any profile/memory
+    // answers the page rejected (e.g. no matching dropdown option).
+    const pendingIds = new Set([...(local.pending || []), ...total.failed.map((f) => f.id)].map(String));
+    total.failed = [];
+    const pending = fields.filter((f) => pendingIds.has(String(f.id)));
+    if (pending.length) {
+      jpToast(`✍️ Filled ${total.filled} fields · asking AI about ${pending.length} more…`, "info");
+      if (!(await checkAutofillConsent(isAuto))) return;
+      const aiResponse = await chrome.runtime.sendMessage({ ...request, fields: pending, skipLocal: true });
+      if (aiResponse?.error) {
+        // Background.js already retries once on a genuine 401 before giving up.
+        if (/auth|401|sign/i.test(aiResponse.error)) {
+          await openPanelOrToast("Your session expired — please sign in again.");
+          return;
+        }
+        if (!total.filled) {
+          jpToast(`Couldn't autofill: ${aiResponse.error}`, "error");
+          return;
+        }
+        jpToast(`Filled ${total.filled} fields from your profile. The AI couldn't answer the rest: ${aiResponse.error}`, "note");
+        return;
+      }
+      if (!(await checkAutofillConsent(isAuto))) return;
+      const second = await applyAnswers(aiResponse.suggestions || []);
+      total.filled += second.filled;
+      total.failed.push(...(second.failed || []));
+      const answered = new Set((aiResponse.suggestions || []).map((s) => String(s.id)));
+      for (const f of pending) {
+        // Unanswered checkboxes are simply left unchecked; not a task for the user.
+        if (!answered.has(String(f.id)) && f.kind !== "checkbox") {
+          total.failed.push({ id: f.id, label: f.label, reason: "No answer available." });
+        }
+      }
     }
-    jpToast(
-      `Filled ${result.filled} fields. ` +
-      (failures.length ? `${failures.length} need manual entry: ${failures.map(item => item.label).join(", ")}. ` : "") +
-      "Review the application and attach your resume.",
-      failures.length ? "error" : "success"
-    );
+
+    console.log(`[JobPilot] Fill result — filled: ${total.filled}, needs input: ${total.failed.length}`);
+    if (!total.filled) {
+      throw new Error("No fields were filled. " + total.failed.map(item => `${item.label}: ${item.reason}`).join("; "));
+    }
+    jpToast(fillSummary(total.filled, total.failed), total.failed.length ? "note" : "success");
   } catch (err) {
     console.error("[JobPilot] Autofill failed:", err);
     // Happens when the extension was reloaded/updated while this page was

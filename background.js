@@ -3,6 +3,7 @@
 
 import { BACKEND_URL } from "./config.js";
 import { getIdToken, signIn } from "./auth.js";
+import { resolveLocally, rememberAnswers, profileVersion } from "./lib/answer-engine.mjs";
 
 // Make clicking the toolbar icon open the side panel automatically.
 chrome.sidePanel
@@ -129,15 +130,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "GENERATE_ANSWERS") {
-    backendGenerate({
-      fields: message.fields,
-      profile: message.profile,
-      jobContext: message.jobContext,
-      structured: message.structured,
-      parsedEntries: message.parsedEntries,
-    })
-      .then((suggestions) => sendResponse({ suggestions }))
+    answerFields(message)
+      .then((result) => sendResponse(result))
       .catch((err) => sendResponse({ error: err.message }));
     return true; // keep the channel open for async response
   }
 });
+
+// Resolve answers locally (profile rules + remembered answers) and only send
+// the remaining fields to the AI. With `localOnly`, return immediately with
+// the ids still pending so the page can fill known fields first.
+async function answerFields(message) {
+  const fields = Array.isArray(message.fields) ? message.fields : [];
+  const version = await profileVersion(message.structured, message.profile);
+  let { answerMemory } = await chrome.storage.local.get("answerMemory");
+  if (answerMemory?.version !== version) answerMemory = { version, entries: {} };
+
+  const context = { sourceHint: message.jobContext?.sourceHint, today: new Date() };
+  const { suggestions, pending } = message.skipLocal
+    ? { suggestions: [], pending: fields }
+    : resolveLocally(fields, { structured: message.structured, memory: answerMemory, context });
+  if (message.localOnly) {
+    return { suggestions, pending: pending.map((f) => f.id) };
+  }
+  if (!pending.length) return { suggestions, aiFields: 0 };
+
+  const ai = (await backendGenerate({
+    fields: pending,
+    profile: message.profile,
+    jobContext: message.jobContext,
+    structured: message.structured,
+    parsedEntries: message.parsedEntries,
+  })).map((s) => ({ ...s, source: "ai" }));
+  await chrome.storage.local.set({ answerMemory: { ...rememberAnswers(answerMemory, pending, ai), version } });
+  return { suggestions: [...suggestions, ...ai], aiFields: pending.length };
+}

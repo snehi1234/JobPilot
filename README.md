@@ -57,6 +57,8 @@ JobPilot is a Chrome extension that uses an LLM to fill out online job applicati
 - **Per-user limits can't be raced.** A single `INSERT … ON CONFLICT … RETURNING` statement increments the counter, so concurrent requests can't exceed the monthly cap.
 - **Database access goes through the backend only.** Row-level security is on and has no client policies. Only the backend's service role can read or write.
 - **Concurrent fills can't collide.** A per-frame lock stops overlapping runs from reassigning field IDs underneath each other.
+- **Most fields never reach the AI.** A local answer engine fills contact details, links, location, phone country code, visa type, today's date and the application source directly from the profile, then reuses earlier AI answers to the same question (keyed to a hash of the profile, so any profile edit invalidates them; essays, salary and dates are never reused). Known fields are written in ~200 ms; only the remaining questions go to the AI in a single request.
+- **Free-tier aware.** Per-user caps (6 AI requests/minute, 25/day, 300/month) protect the shared Groq Free-plan budget (per model: 30 RPM, 8K tokens/min, 200K tokens/day). gpt-oss runs with low reasoning effort, short `retry-after` waits are honoured, and resume parsing is cached on the device.
 
 ## Tech stack
 

@@ -736,7 +736,7 @@ async function deleteMyData() {
   els.deleteData.disabled = true;
   try {
     await cloudDelete();
-    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled"]);
+    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled", "parseCache"]);
     clearFormUI();
     showStatus("Your saved profile and resume have been deleted ✓", "success");
     setTimeout(hideStatus, 2500);

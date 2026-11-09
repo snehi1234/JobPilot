@@ -775,6 +775,40 @@ function fillButtonGroup(groupId, value) {
   }
   return false;
 }
+// Option text in autocomplete popups often concatenates several spans
+// (Ashby: name + country + domain). The first span is the display name.
+function optionName(option) {
+  const first = option.querySelector("span");
+  return (first?.textContent || option.textContent || "").trim();
+}
+
+function matchScore(target, candidate) {
+  const words = (s) => normalizeForMatch(s).split(/[^a-z0-9]+/).filter(w => w.length > 2);
+  const t = normalizeForMatch(target);
+  const c = normalizeForMatch(candidate);
+  if (!c) return 0;
+  if (c === t) return 2;
+  if (t.length >= 4 && c.startsWith(t)) return 1.5; // "Seattle, Washington" → "Seattle, Washington, United States"
+  const tw = words(target);
+  const cw = new Set(words(candidate));
+  if (!tw.length || !cw.size) return 0;
+  const shared = tw.filter(w => cw.has(w)).length;
+  const coverTarget = shared / tw.length;
+  const coverCandidate = shared / cw.size;
+  if (coverTarget < 0.6 || coverCandidate < 0.6) return 0;
+  return (coverTarget + coverCandidate) / 2;
+}
+
+// Search strategies for typeahead fields: full value, then without
+// parentheses/qualifiers, then the parenthetical (often an acronym).
+function typeaheadQueries(value) {
+  const v = value.trim();
+  const noParen = v.replace(/\s*\([^)]*\)/g, "").trim();
+  const paren = (v.match(/\(([^)]+)\)/) || [])[1]?.trim();
+  const beforeComma = noParen.split(",")[0].trim();
+  return [...new Set([v, noParen, beforeComma, paren].filter(q => q && q.length >= 2))];
+}
+
 async function fillCombobox(input, value) {
   const control = comboboxContainer(input);
   input.focus({ preventScroll: true }); // see note in fillText() — avoid page-jumping scroll
@@ -783,28 +817,44 @@ async function fillCombobox(input, value) {
   input.click();
   await sleep(150);
 
-  setNativeValue(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  const target = value.trim().toLowerCase();
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (const query of typeaheadQueries(value)) {
+    setNativeValue(input, "");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
     await sleep(100);
-    const controlled = input.getAttribute("aria-controls");
-    const list = controlled ? jpResolveId(controlled, input) : null;
-    const options = jpQueryAll("[role='option'], [class*='select__option'], [class*='option']", list || document)
-      .filter(option => isVisible(option) && option.textContent.trim() && option.getAttribute("aria-disabled") !== "true");
-    const match =
-      options.find(option => option.textContent.trim().toLowerCase() === target) ||
-      options.find(option => target.length > 3 && option.textContent.trim().toLowerCase().includes(target));
-    if (match) {
-      match.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      match.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-      match.click();
+    setNativeValue(input, query);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await sleep(400); // let remote search results replace any stale list
+
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const controlled = input.getAttribute("aria-controls");
+      const list = controlled ? jpResolveId(controlled, input) : null;
+      const options = jpQueryAll("[role='option'], [class*='select__option'], [class*='option']", list || document)
+        .filter(option => isVisible(option) && option.textContent.trim() && option.getAttribute("aria-disabled") !== "true");
+      let best = null;
+      let bestScore = 0;
+      for (const option of options) {
+        const score = Math.max(matchScore(value, optionName(option)), matchScore(query, optionName(option)));
+        if (score > bestScore) { best = option; bestScore = score; }
+      }
+      if (best) {
+        const chosen = normalizeForMatch(optionName(best)).slice(0, 12);
+        best.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        best.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        best.click();
+        // Frameworks commit the selection asynchronously; wait for it to show.
+        for (let wait = 0; wait < 15; wait++) {
+          await sleep(100);
+          if (normalizeForMatch(`${input.value} ${control?.textContent || ""}`).includes(chosen)) return true;
+        }
+        return false;
+      }
+      if (options.length && attempt >= 10) break; // results loaded but none match this query
       await sleep(100);
-      return input.value.trim().toLowerCase().includes(target) ||
-        control?.textContent?.trim().toLowerCase().includes(target) || false;
     }
   }
 
+  setNativeValue(input, "");
+  input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
   return false;
 }
@@ -874,7 +924,10 @@ async function applyAnswers(suggestions) {
   let filled = 0;
   const failed = [];
 
-  for (const s of suggestions) {
+  // Instant fields first; searchable dropdowns wait on network results.
+  const ordered = [...suggestions].sort((a, b) =>
+    (fieldRegistry[String(a?.id)]?.kind === "combobox") - (fieldRegistry[String(b?.id)]?.kind === "combobox"));
+  for (const s of ordered) {
     if (s?.value == null || s.value === "") continue;
     const id = String(s.id);
     const meta = fieldRegistry[id];

@@ -9,8 +9,11 @@ function harness(backendUrl, responses) {
   let onMessage;
   let token = "synthetic-test-token";
   let refreshes = 0;
+  const store = {};
   const context = vm.createContext({
     BACKEND_URL: backendUrl,
+    TextEncoder,
+    crypto: globalThis.crypto,
     getIdToken: async () => token,
     signIn: async () => { refreshes++; token = "refreshed-test-token"; },
     console,
@@ -24,6 +27,10 @@ function harness(backendUrl, responses) {
       });
     },
     chrome: {
+      storage: { local: {
+        async get(key) { return { [key]: store[key] }; },
+        async set(values) { Object.assign(store, values); },
+      } },
       sidePanel: {
         setPanelBehavior: async () => {},
         open: async () => {},
@@ -91,4 +98,14 @@ test("the existing one-time authentication refresh still works", async () => {
   assert.equal(h.calls.length, 2);
   assert.equal(h.calls[1].options.headers.Authorization, "Bearer refreshed-test-token");
   assert.ok(h.calls.every((call) => call.url === "https://jobpilot.example.invalid/api/parse-resume"));
+});
+
+test("resume parsing is cached so repeat autofills make one AI call", async () => {
+  const parsed = { counts: { experience: 1, education: 1 }, entries: { experience: [], education: [] } };
+  const h = harness("https://jobpilot.example.invalid", [{ status: 200, body: parsed }]);
+  const first = await h.request({ type: "COUNT_ENTRIES", profile: "Synthetic test profile" });
+  const second = await h.request({ type: "COUNT_ENTRIES", profile: "Synthetic test profile" });
+  assert.deepEqual(first, parsed);
+  assert.deepEqual(second, parsed);
+  assert.equal(h.calls.length, 1);
 });

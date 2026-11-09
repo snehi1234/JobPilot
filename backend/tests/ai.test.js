@@ -82,7 +82,7 @@ test("exhausting both Groq models returns 429 without any other provider", async
   const calls = mockGroq(t, [429, 429]);
   await assert.rejects(callAI("Synthetic test prompt"), (err) => {
     assert.equal(err.status, 429);
-    assert.match(err.message, /No other AI provider/);
+    assert.match(err.message, /free AI capacity is busy/);
     return true;
   });
   assert.equal(calls.length, 2);
@@ -128,7 +128,7 @@ for (const [name, handler, body] of [
       body,
     }, response);
     assert.equal(response.statusCode, 429);
-    assert.match(response.body.error, /Groq quota/);
+    assert.match(response.body.error, /free AI capacity is busy/);
     assert.equal(response.body.counts, undefined);
     assert.equal(response.body.suggestions, undefined);
     assert.equal(calls.length, 2);
@@ -147,4 +147,29 @@ test("health identifies Groq as the only active AI provider", async (t) => {
 
 test("the shared JSON helper still handles fenced responses", () => {
   assert.deepEqual(extractJson('```json\n{"suggestions":[]}\n```'), { suggestions: [] });
+});
+
+test("a short retry-after on every model waits once and then succeeds", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.endsWith("/models")) {
+      return new Response(JSON.stringify({ data: [{ id: "openai/gpt-oss-120b" }, { id: "openai/gpt-oss-20b" }] }), { status: 200 });
+    }
+    calls.push(JSON.parse(options.body).model);
+    if (calls.length <= 2) return new Response("limited", { status: 429, headers: { "retry-after": "0" } });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] }), { status: 200 });
+  });
+  assert.equal(await callAI("Synthetic test prompt"), "{}");
+  assert.deepEqual(calls, ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]);
+});
+
+test("a long retry-after returns 429 immediately instead of waiting", async (t) => {
+  const models = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: "openai/gpt-oss-120b" }] }), { status: 200 });
+    models.push(JSON.parse(options.body).model);
+    return new Response("limited", { status: 429, headers: { "retry-after": "45" } });
+  });
+  await assert.rejects(callAI("Synthetic test prompt"), (err) => err.status === 429);
+  assert.equal(new Set(models).size, models.length, "no model should be retried after a long wait");
 });

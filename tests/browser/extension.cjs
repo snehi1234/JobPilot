@@ -28,7 +28,7 @@ const test = base.extend({
     context.on("page", page => {
       page.on("pageerror", error => api.errors.push(error.message));
       page.on("console", message => {
-        if (message.type() === "error" && message.text().includes("[JobPilot]")) api.errors.push(message.text());
+        if (["error", "warning"].includes(message.type()) && message.text().includes("[JobPilot]")) api.errors.push(message.text());
       });
     });
     await context.route(`${backend}/**`, async (route) => {
@@ -58,6 +58,8 @@ const test = base.extend({
           "current/last company": "Example Inc",
           degree: "Master of Science",
           "field of study": "Computer Science",
+          school: "Maulana Azad National Institute of Technology (MANIT)",
+          location: "Seattle, Washington",
         };
         response = {
           suggestions: (typeof api.suggestions === "function" ? api.suggestions(body.fields) : api.suggestions) ?? body.fields.flatMap((field) => {

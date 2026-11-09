@@ -88,7 +88,18 @@ async function backendGenerate({ fields, profile, jobContext, structured, parsed
 }
 
 async function backendParse(profile) {
-  return callBackendWithAuth("/api/parse-resume", { profile }); // { counts, entries }
+  // Resume parsing is deterministic for the same text, so cache it locally.
+  // This halves AI calls per autofill and protects the shared free quota.
+  const bytes = new TextEncoder().encode(profile || "");
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  const { parseCache } = await chrome.storage.local.get("parseCache");
+  if (parseCache?.hash === hash && parseCache.result?.entries) return parseCache.result;
+  const result = await callBackendWithAuth("/api/parse-resume", { profile }); // { counts, entries, structured }
+  if (result?.entries && !result.warning) {
+    await chrome.storage.local.set({ parseCache: { hash, result } });
+  }
+  return result;
 }
 
 // Listen for requests from the side panel.

@@ -41,16 +41,24 @@ export async function listGroqModels() {
   return ids;
 }
 
+const NON_CHAT = /whisper|tts|orpheus|guard|safeguard|embed|compound|allam/i;
+
 async function usableModels() {
-  const available = new Set(await listGroqModels());
-  const preferred = PREFERRED_MODELS.filter((id) => available.has(id));
-  if (preferred.length) return preferred.slice(0, 3);
-  const fallback = [...available].filter((id) => !/whisper|tts|guard|embed|compound/i.test(id));
-  if (fallback.length) return fallback.slice(0, 3);
+  const available = await listGroqModels();
+  const preferred = PREFERRED_MODELS.filter((id) => available.includes(id));
+  const others = available.filter((id) => !preferred.includes(id) && !NON_CHAT.test(id));
+  const models = [...preferred, ...others].slice(0, 4);
+  if (models.length) return models;
   const err = new Error("No usable Groq chat models are available to this API key.");
   err.status = 503;
   throw err;
 }
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Free-tier limits are per model and per minute, so a short wait usually
+// clears them. Stay well inside the serverless function's 60 s limit.
+const MAX_RETRY_WAIT_S = 10;
+const RETRY_BUDGET_MS = 35000;
 
 // Rough token estimate (~4 chars/token) used to pick a model that fits.
 function estimateTokens(text) {
@@ -66,9 +74,12 @@ async function callGroq(prompt, { maxOutputTokens, temperature }) {
   }
 
   const order = await usableModels();
+  const started = Date.now();
 
   let lastErr;
   let rateLimitErr;
+  for (let pass = 0; pass < 2; pass++) {
+  let shortestWait = Infinity;
   for (const model of order) {
     try {
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -97,6 +108,9 @@ async function callGroq(prompt, { maxOutputTokens, temperature }) {
         const errText = await res.text();
         const err = new Error(`Groq ${res.status} on ${model}: ${errText.slice(0, 200)}`);
         err.status = res.status;
+        const retryHeader = res.headers.get("retry-after");
+        const retryAfter = retryHeader === null ? NaN : Number(retryHeader);
+        if (res.status === 429 && Number.isFinite(retryAfter)) shortestWait = Math.min(shortestWait, retryAfter);
         throw err;
       }
 
@@ -112,6 +126,10 @@ async function callGroq(prompt, { maxOutputTokens, temperature }) {
       throw err;
     }
   }
+  const waitMs = shortestWait * 1000;
+  if (!rateLimitErr || shortestWait > MAX_RETRY_WAIT_S || Date.now() - started + waitMs > RETRY_BUDGET_MS) break;
+  await sleep(waitMs + 250);
+  }
   throw rateLimitErr || lastErr || new Error("All Groq models failed.");
 }
 
@@ -121,7 +139,7 @@ export async function callAI(prompt, generationConfig = {}) {
   } catch (err) {
     if (err.status === 429) {
       const limited = new Error(
-        "Groq quota or rate limit reached (429). Try again later. No other AI provider will be used."
+        "JobPilot's free AI capacity is busy (rate limit 429). Please wait about a minute and try again."
       );
       limited.status = 429;
       throw limited;

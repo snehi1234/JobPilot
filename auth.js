@@ -102,5 +102,5 @@ export async function signIn({ interactive = true } = {}) {
 }
 
 export async function signOut() {
-  await chrome.storage.local.remove([AUTH_KEY, "autoFillEnabled"]);
+  await chrome.storage.local.remove([AUTH_KEY, "autoFillEnabled", "parseCache"]);
 }

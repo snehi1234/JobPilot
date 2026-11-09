@@ -41,11 +41,19 @@ test("Plaid: floating autofill writes and retains contact fields without submitt
   const cookies = job.getByRole("button", { name: "Necessary Only", exact: true });
   if (await cookies.count()) await cookies.click();
   let submissions = 0;
+  // Allow read-only lookups (Ashby's location/school search are POSTs) but
+  // block anything that could submit or upload an application.
   await job.route("**/*", async (route) => {
-    if (route.request().method() !== "GET") {
-      submissions++;
-      await route.abort();
-      return;
+    const request = route.request();
+    if (request.method() !== "GET") {
+      const body = request.postData() || "";
+      const lookup = /ashbyhq\.com/.test(request.url()) && /(search|autocomplete|location|school|lookup)/i.test(body + request.url())
+        && !/submit|apply|upload|createApplication/i.test(body + request.url());
+      if (!lookup) {
+        submissions++;
+        await route.abort();
+        return;
+      }
     }
     await route.continue();
   });
@@ -79,6 +87,10 @@ test("Plaid: floating autofill writes and retains contact fields without submitt
   const checkboxLabels = fields.filter(field => field.kind === "checkbox").map(field => field.label);
   expect(new Set(checkboxLabels).size).toBe(checkboxLabels.length);
   await expect(job.locator("#_systemfield_email")).toHaveValue(profile.email);
+  await expect(job.getByPlaceholder("Search schools...")).toHaveValue(/Maulana Azad National Institute of Technology/, { timeout: 20000 });
+  await expect.poll(async () => (await job.locator("#jobpilot-toast").textContent().catch(() => "")) || "", { timeout: 30000 }).toMatch(/Filled|failed/);
+  console.log("Toast:", await job.locator("#jobpilot-toast").textContent(), "| warnings:", JSON.stringify(api.errors));
+  await expect(job.getByPlaceholder("Start typing...")).toHaveValue(/Seattle/, { timeout: 20000 });
   await expect(job.getByLabel("Phone Number", { exact: false })).toHaveValue(profile.phone);
   await expect(job.getByLabel("Current/Last Company", { exact: false })).toHaveValue("Example Inc");
   await job.locator("#_systemfield_email").focus();

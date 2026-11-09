@@ -74,7 +74,9 @@ Rules:
 - Match fields semantically (e.g. "Given name" = first name).
 - kind "select" or "radio": the "value" MUST be exactly one of the provided "options".
 - kind "radio" yes/no questions: answer "Yes" or "No" based on the profile/details.
-- kind "combobox": no options given; return the best short value.
+- kind "combobox": no options given; return the best short value. For School / University / Institution fields, return the FULL OFFICIAL institution name exactly as it is commonly listed (expand abbreviations, e.g. "NIT Bhopal (MANIT)" → "Maulana Azad National Institute of Technology"; "IU Bloomington" → "Indiana University Bloomington"). For Location fields return "City, State".
+- EDUCATION GROUPS: The FIRST education group on the form gets the MOST RECENT degree. Education Start/End dates must come from that SAME education entry's startDate/graduationDate — NEVER use work-experience dates for education. If the entry has no start date, leave Start Date empty.
+- SPLIT DATE FIELDS: A field labelled "... (month)" takes the month NAME (e.g. "July"); a field labelled "... (year)" takes the 4-digit year.
 - kind "checkbox": value must be "Yes" (to check) or "No" (to leave unchecked).
 - DATE FIELDS: For any Start Date / End Date / Graduation Date, output the date as "MM/YYYY" (e.g. "09/2024"). Keep each job's OWN dates — do NOT mix up or reuse dates across different jobs. If a date is unknown, leave it empty.
 - CURRENT JOB / END DATE: For the user's CURRENT job (end date "Present"/"Now"), set "Current Job" to "Yes" and leave that job's "End Date" EMPTY. Never put "Present"/"Now" into a date field.
@@ -108,12 +110,12 @@ Rules:
 - Keep values short.
 
 Respond with ONLY this JSON:
-{"contact":{"firstName":"","lastName":"","email":"","phone":"","location":"","country":"","linkedin":"","website":"","experience":""},"experience":[{"position":"","organization":"","startDate":"","endDate":""}],"education":[{"degree":"","major":"","institution":"","graduationDate":""}]}`;
+{"contact":{"firstName":"","lastName":"","email":"","phone":"","location":"","country":"","linkedin":"","website":"","experience":""},"experience":[{"position":"","organization":"","startDate":"","endDate":""}],"education":[{"degree":"","major":"","institution":"","startDate":"","graduationDate":""}]}`;
 }
 
 export const FILL_GEN_CONFIG = {
   temperature: 0.2,
-  maxOutputTokens: 6144,
+  maxOutputTokens: 4096,
   responseMimeType: "application/json",
 };
 

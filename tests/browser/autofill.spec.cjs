@@ -4,12 +4,25 @@ test("uploading a resume populates empty Quick Details", async ({ app }) => {
   const { panel, api } = app;
   const resume = process.env.JOBPILOT_TEST_RESUME;
   test.skip(!resume, "Set JOBPILOT_TEST_RESUME to a local PDF; it is never sent to a remote API.");
+  // The backend returns no contact details, so these values must come from the
+  // in-browser PDF extraction alone.
+  api.parseStructured = {};
   await panel.locator("#resumeFile").setInputFiles(resume);
   try {
     await expect.poll(() => api.calls.filter(call => call.method === "PUT").length, { timeout: 20000 }).toBeGreaterThan(0);
   } catch (error) {
     console.log(JSON.stringify({ status: await panel.locator("#status").textContent(), endpoints: api.calls.map(c => c.endpoint), errors: api.errors }));
     throw error;
+  }
+  const filled = await panel.evaluate(() => ["firstName","lastName","email","phone","location","linkedin","website","experience"]
+    .map(k => `${k}:${document.getElementById("sf_" + k).value ? "filled" : "EMPTY"}`).join(" "));
+  console.log("Quick Details from local extraction ->", filled);
+  if (process.env.JOBPILOT_PHONE_SHAPE) {
+    const shapes = await app.worker.evaluate(async () => {
+      const { uploadedResumeText: t = "" } = await chrome.storage.local.get("uploadedResumeText");
+      return [...t.slice(0, 1500).matchAll(/[+(\d][\d\s().+\-]{8,22}\d/g)].map(m => m[0].replace(/\d/g, "d"));
+    });
+    console.log("Phone-like shapes:", JSON.stringify(shapes));
   }
   await expect(panel.locator("#sf_firstName")).not.toHaveValue("");
   await expect(panel.locator("#sf_email")).not.toHaveValue("");

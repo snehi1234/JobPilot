@@ -46,7 +46,7 @@ const test = base.extend({
         if (request.method() === "DELETE") api.profile = null;
         response = request.method() === "GET" ? { profile: api.profile } : { ok: true };
       } else if (endpoint === "/api/parse-resume") {
-        response = { counts: { experience: 1, education: 1 }, entries, structured: profile };
+        response = { counts: { experience: 1, education: 1 }, entries, structured: api.parseStructured === undefined ? profile : api.parseStructured };
       } else if (endpoint === "/api/generate") {
         const values = {
           name: `${profile.firstName} ${profile.lastName}`,

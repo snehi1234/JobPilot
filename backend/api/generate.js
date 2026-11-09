@@ -4,7 +4,7 @@
 //
 // The extension calls this endpoint; the Groq API key stays server-side.
 
-import { callAI, extractJson } from "../lib/ai.js";
+import { callAI, extractJson, AI_UNAVAILABLE } from "../lib/ai.js";
 import { buildFillPrompt, FILL_GEN_CONFIG } from "../lib/prompts.js";
 import {
   applyCors,
@@ -77,7 +77,8 @@ export default async function handler(req, res) {
     );
     return res.status(200).json({ suggestions: parsed.suggestions || [] });
   } catch (err) {
-    const status = err.status === 429 ? 429 : 502;
-    return res.status(status).json({ error: err.message || "AI request failed." });
+    console.error(`[generate] AI request failed: ${err.message}`);
+    if (err.status === 429) return res.status(429).json({ error: err.message });
+    return res.status(502).json({ error: AI_UNAVAILABLE });
   }
 }

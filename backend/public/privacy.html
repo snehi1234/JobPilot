@@ -34,9 +34,8 @@
         Your profile is used solely to generate and fill in answers on job
         application forms. When you request answers, the relevant profile
         and resume text, optional demographics, form fields, and job details
-        are sent to our Vercel-hosted backend and third-party AI provider
-        Groq. This release uses Groq's Free plan and does not fall back to
-        another provider when its quota is exhausted.
+        are sent to our servers and processed by a third-party AI service
+        provider that generates the answers on our behalf.
         Automatic filling is off by default.
         If you explicitly enable it in the panel, this processing and filling
         can occur on recognized job application pages without another click
@@ -47,7 +46,7 @@
     <section class="step">
       <h3>Where it's stored</h3>
       <p>
-        Data is stored securely in our cloud database (Supabase), isolated
+        Data is stored securely with our cloud database provider, isolated
         per user account by authenticated backend requests. Direct client
         access to the database is blocked by row-level security. A copy is
         cached locally in your browser (<code>chrome.storage.local</code>).

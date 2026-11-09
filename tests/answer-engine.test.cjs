@@ -97,3 +97,13 @@ test("any profile change produces a new version, invalidating remembered answers
   assert.notEqual(a, await profileVersion({ ...profile, phone: "+1 202 555 0199" }, "resume text"));
   assert.notEqual(a, await profileVersion(profile, "resume text updated"));
 });
+
+test("user-facing extension pages never name internal vendors or plans", () => {
+  const fs = require("node:fs");
+  const root = path.join(__dirname, "..");
+  for (const file of ["sidepanel.html", "onboarding.html", "privacy.html", "terms.html", "sidepanel.js", "content.js",
+    "backend/public/index.html", "backend/public/privacy.html", "backend/public/terms.html"]) {
+    const text = fs.readFileSync(path.join(root, file), "utf8");
+    assert.doesNotMatch(text, /\b(groq|supabase|vercel|gemini|gpt-oss)\b|free[- ]tier|free plan|paid provider/i, file);
+  }
+});

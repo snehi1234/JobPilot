@@ -495,7 +495,7 @@ async function fillForm() {
       );
     }
 
-    showStatus(`Found ${fields.length} fields. Asking Groq…`, "info");
+    showStatus(`Found ${fields.length} fields. Generating answers…`, "info");
 
     // 2. Send fields + profile to the background worker for the AI call.
     const aiResponse = await chrome.runtime.sendMessage({

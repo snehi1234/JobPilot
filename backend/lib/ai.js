@@ -137,13 +137,16 @@ async function callGroq(prompt, { maxOutputTokens, temperature }) {
   throw rateLimitErr || lastErr || new Error("All Groq models failed.");
 }
 
+// Shown to users for any non-rate-limit AI failure; details go to server logs.
+export const AI_UNAVAILABLE = "JobPilot's AI service is temporarily unavailable. Please try again in a moment.";
+
 export async function callAI(prompt, generationConfig = {}) {
   try {
     return await callGroq(prompt, generationConfig);
   } catch (err) {
     if (err.status === 429) {
       const limited = new Error(
-        "JobPilot's free AI capacity is busy (rate limit 429). Please wait about a minute and try again."
+        "JobPilot's AI service is busy right now. Please wait about a minute and try again."
       );
       limited.status = 429;
       throw limited;

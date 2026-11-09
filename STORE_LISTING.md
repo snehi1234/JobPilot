@@ -47,19 +47,14 @@ make mistakes.
 • Handles common text fields, dropdowns, and repeated work/education sections
 • Offers editable suggestions in the side panel
 • Lets you disable automatic filling and delete your saved profile
-• Free to use, with a per-user monthly AI-request limit and Groq Free-plan limits
-• No fallback to a paid provider when the free quota is exhausted
+• Free to use, with a fair monthly usage limit
 
 **Your privacy:**
-The extension locally checks page structure to recognize job application
-pages and show the floating button. Saved profile details and resume text
-sync to JobPilot's backend and Supabase database. When you request AI answers,
-your profile, resume text, optional demographics, form fields, and job details
-are sent through the Vercel-hosted backend to Groq.
-If you opt into automatic filling, this processing happens on recognized
-job pages without another click. You can turn it off in the side panel.
-The profile-deletion control removes saved profile and resume data; monthly
-usage counters are retained separately to enforce the usage limit.
+JobPilot checks page structure on your device to recognize job applications.
+Your saved details and resume are stored securely in your JobPilot account.
+When you autofill, the relevant details and the form's questions are processed
+by our AI service to generate answers. Automatic filling is off by default and
+can be turned off anytime. You can delete your saved profile from the side panel.
 
 Read our Privacy Policy: https://backend-alpha-seven-87.vercel.app/privacy.html
 Read our Terms of Service: https://backend-alpha-seven-87.vercel.app/terms.html
@@ -128,10 +123,8 @@ autofill, and quota enforcement. Data is not sold or used for advertising.
 Automatic processing is off by default and requires the separate in-product
 opt-in described above.
 
-Data is transmitted to JobPilot's own backend server (hosted on Vercel) over
-HTTPS, and to AI provider Groq to generate answers. The Groq organization must
-remain on its Free plan for this release. Quota errors are surfaced, not
-routed to another provider.
+Data is transmitted over HTTPS to JobPilot's servers and to a third-party AI
+service provider that generates answers on JobPilot's behalf.
 
 ---
 

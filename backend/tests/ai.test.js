@@ -82,7 +82,7 @@ test("exhausting both Groq models returns 429 without any other provider", async
   const calls = mockGroq(t, [429, 429]);
   await assert.rejects(callAI("Synthetic test prompt"), (err) => {
     assert.equal(err.status, 429);
-    assert.match(err.message, /free AI capacity is busy/);
+    assert.match(err.message, /AI service is busy/);
     return true;
   });
   assert.equal(calls.length, 2);
@@ -128,21 +128,34 @@ for (const [name, handler, body] of [
       body,
     }, response);
     assert.equal(response.statusCode, 429);
-    assert.match(response.body.error, /free AI capacity is busy/);
+    assert.match(response.body.error, /AI service is busy/);
     assert.equal(response.body.counts, undefined);
     assert.equal(response.body.suggestions, undefined);
     assert.equal(calls.length, 2);
   });
 }
 
-test("health identifies Groq as the only active AI provider", async (t) => {
+test("health reports only pass/fail flags, never vendor or model details", async (t) => {
   mockGroq(t, []);
   const response = responseRecorder();
   await health({ method: "GET", headers: {} }, response);
-  assert.equal(response.body.aiProvider, "groq");
-  assert.equal(response.body.groqConfigured, true);
-  assert.ok(response.body.availableModels.includes("openai/gpt-oss-120b"));
-  assert.equal("geminiConfigured" in response.body, false);
+  assert.equal(response.body.ai, true);
+  const text = JSON.stringify(response.body).toLowerCase();
+  for (const secret of ["groq", "gpt-oss", "supabase", "vercel", "model", "limit"]) {
+    assert.ok(!text.includes(secret), `health must not expose "${secret}"`);
+  }
+});
+
+test("non-rate-limit AI failures return a generic message to users", async (t) => {
+  mockGroq(t, [500, 503]);
+  const response = responseRecorder();
+  await generate({
+    method: "POST",
+    headers: { origin: "chrome-extension://test", "x-forwarded-for": "192.0.2.9" },
+    body: { profile: "Synthetic", fields: [{ id: "1", label: "Name", kind: "text" }] },
+  }, response);
+  assert.equal(response.statusCode, 502);
+  assert.doesNotMatch(response.body.error, /groq|gpt|model|50\d/i);
 });
 
 test("the shared JSON helper still handles fenced responses", () => {

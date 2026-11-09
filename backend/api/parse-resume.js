@@ -2,7 +2,7 @@
 // Body: { profile }
 // Returns: { counts: { experience, education }, entries: { experience, education } }
 
-import { callAI } from "../lib/ai.js";
+import { callAI, AI_UNAVAILABLE } from "../lib/ai.js";
 import { buildParsePrompt, PARSE_GEN_CONFIG } from "../lib/prompts.js";
 import {
   applyCors,
@@ -125,6 +125,7 @@ export default async function handler(req, res) {
       structured,
     });
   } catch (err) {
+    console.error(`[parse-resume] AI request failed: ${err.message}`);
     if (err.status === 429) {
       return res.status(429).json({ error: err.message });
     }
@@ -135,7 +136,7 @@ export default async function handler(req, res) {
         education: clamp(heuristic.education),
       },
       entries: null,
-      warning: err.message,
+      warning: AI_UNAVAILABLE,
     });
   }
 }

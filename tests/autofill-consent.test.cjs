@@ -230,7 +230,9 @@ test("the opt-in control is unchecked and disabled until preferences load", () =
   assert.doesNotMatch(input, /\bchecked\b/);
   assert.match(input, /\bdisabled\b/);
   assert.match(input, /aria-describedby="autoFillDisclosure"/);
-  assert.match(html, /without prior review/);
+  assert.match(html, /Off by default/);
+  assert.match(html, /AI service/);
+  assert.match(html, /review answers before you submit/);
 });
 
 test("the real side-panel toggle persists consent and reports storage errors", async () => {

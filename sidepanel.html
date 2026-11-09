@@ -43,13 +43,10 @@
     <section class="card">
       <h2>How your data is used</h2>
       <p class="hint">
-        Saved profile details and resume text sync to JobPilot's backend and
-        Supabase database. When you request AI answers, your profile, resume,
-        optional demographics, form fields, and job details are sent through
-        the backend to Groq. AI answers can be incorrect;
-        always review them before submitting an application.
-        Free-tier limits may temporarily block AI requests; there is no
-        fallback to a paid provider.
+        Your saved details and resume are stored securely in your JobPilot
+        account. When you autofill, the relevant details and the form's
+        questions are processed by our AI service to generate answers.
+        AI answers can be incorrect — always review them before submitting.
         <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
       </p>
     </section>
@@ -231,17 +228,13 @@
     <section class="card">
       <h2>Automatic filling (optional)</h2>
       <p id="autoFillDisclosure" class="hint">
-        Off by default. If enabled, opening a recognized job application page
-        automatically sends your saved profile, resume text, optional demographics,
-        form fields, and job details to JobPilot's backend and Groq,
-        then writes answers into the page without prior review.
-        This applies to recognized job pages in this browser while the floating
-        button is enabled. Turn it off here to stop future automatic fills.
-        Review all filled answers and submit applications yourself.
+        Off by default. When on, JobPilot fills recognized job applications as
+        soon as they open, sending your profile and the form's questions to our
+        AI service. Always review answers before you submit.
       </p>
       <label class="switch-label">
         <input type="checkbox" id="autoFillToggle" aria-describedby="autoFillDisclosure" disabled />
-        <span>I agree to automatic AI processing and filling on job pages</span>
+        <span>Fill applications automatically</span>
       </label>
     </section>
 
@@ -259,9 +252,7 @@
     <section class="card danger-zone">
       <h2>Privacy</h2>
       <p class="hint">
-        Delete your saved profile, resume text, and demographics from JobPilot's
-        profile database and this browser. Automatic filling will be turned off.
-        Monthly usage counters are retained separately to enforce the usage limit.
+        Permanently delete your saved profile and resume from JobPilot.
       </p>
       <button id="deleteData" class="btn-danger" type="button">
         🗑️ Delete My Data

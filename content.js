@@ -1975,6 +1975,7 @@ function injectFab() {
   wrap.appendChild(closeBtn);
   shadow.appendChild(wrap);
   document.documentElement.appendChild(host);
+  jpKeepFabOnScreen(host);
   console.log("[JobPilot] Floating Autofill button injected.");
 
   // ---- Drag to move (pointer events cover mouse + touch) ----
@@ -2034,6 +2035,25 @@ function injectFab() {
 function removeFab() {
   document.getElementById(JP_BTN_ID)?.remove();
 }
+
+// A position saved on a wider window (or before a zoom change) can be off
+// screen; put the button back in the default corner when it doesn't fit.
+function jpKeepFabOnScreen(host = document.getElementById(JP_BTN_ID)) {
+  if (!host || !host.style.left) return;
+  const rect = host.getBoundingClientRect();
+  const width = rect.width || 130;
+  const height = rect.height || 44;
+  const fits = rect.left >= 0 && rect.top >= 0 &&
+    rect.left + width <= window.innerWidth && rect.top + height <= window.innerHeight;
+  if (fits) return;
+  host.style.left = "";
+  host.style.top = "";
+  host.style.right = "20px";
+  host.style.bottom = "20px";
+  try { window.localStorage.removeItem("jobpilot_fab_pos"); } catch { /* storage blocked */ }
+}
+
+if (!jpSkipFrame) window.addEventListener?.("resize", () => jpKeepFabOnScreen());
 
 // Persist the button's dragged position across page loads (per-device, via
 // chrome.storage.local) so it doesn't jump back to the corner every time.

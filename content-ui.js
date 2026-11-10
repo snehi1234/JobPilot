@@ -1,0 +1,454 @@
+// content-ui.js — on-page assistance shown after autofill. Loaded before
+// content.js in the same isolated world, so both share these globals.
+//
+//   • Colour-codes filled fields by where the answer came from.
+//   • Records the previous state of every field so the fill can be undone.
+//   • Shows a checklist: what was filled, AI answers to review, fields that
+//     need the user, the resume used, and whether the file was attached.
+//   • Learns from the user's corrections to autofilled answers.
+//   • Attaches the selected resume file to resume/CV upload fields.
+//   • Keeps a short session so multi-step forms continue on the next step.
+
+const JP_MARK_ATTR = "data-jobpilot-source";
+const JP_MARK_STYLE = {
+  profile: { color: "#16a34a", title: "Filled from your JobPilot profile" },
+  memory: { color: "#16a34a", title: "Filled from an answer you've used before" },
+  correction: { color: "#16a34a", title: "Filled with the answer you chose last time" },
+  ai: { color: "#2563eb", title: "AI answer — please check it" },
+  draft: { color: "#2563eb", title: "AI draft — please review and personalize" },
+  library: { color: "#2563eb", title: "From your saved answers — please personalize" },
+  needs: { color: "#d97706", title: "JobPilot couldn't fill this — please complete it" },
+};
+const JP_SESSION_KEY = "jobpilot_session";
+const JP_SESSION_MS = 30 * 60 * 1000;
+
+let jpUndoStack = [];
+let jpFillRecords = new Map(); // field id → { source, label, el, kind }
+let jpFieldsById = new Map(); // field id → detected field descriptor
+let jpCurrentResume = null; // { resumeId, name, scores, ... }
+let jpLastJobContext = null;
+let jpChecklistState = null;
+let jpSeenInputs = new WeakSet(); // fields present at the last scan
+
+// ---------- Highlights ----------
+
+function jpHighlightTarget(el) {
+  if (!el) return null;
+  if (el.type === "radio" || el.type === "checkbox") {
+    return el.closest("[role='radiogroup'], fieldset") || el.closest("label") || el.parentElement;
+  }
+  if (el.getAttribute?.("role") === "combobox") return el.closest("[class*='inputContainer'], [class*='control']") || el;
+  return el;
+}
+
+function jpMark(el, source) {
+  const target = jpHighlightTarget(el);
+  const style = JP_MARK_STYLE[source];
+  if (!target || !style) return;
+  if (!target.hasAttribute(JP_MARK_ATTR)) {
+    target.dataset.jobpilotPrevOutline = target.style.outline || "";
+    target.dataset.jobpilotPrevOffset = target.style.outlineOffset || "";
+    target.dataset.jobpilotPrevTitle = target.getAttribute("title") ?? "";
+  }
+  target.setAttribute(JP_MARK_ATTR, source);
+  target.style.outline = `2px solid ${style.color}`;
+  target.style.outlineOffset = "2px";
+  target.setAttribute("title", style.title);
+}
+
+function jpUnmark(el) {
+  const target = el?.hasAttribute?.(JP_MARK_ATTR) ? el : jpHighlightTarget(el);
+  if (!target?.hasAttribute?.(JP_MARK_ATTR)) return;
+  target.style.outline = target.dataset.jobpilotPrevOutline || "";
+  target.style.outlineOffset = target.dataset.jobpilotPrevOffset || "";
+  const title = target.dataset.jobpilotPrevTitle;
+  if (title) target.setAttribute("title", title); else target.removeAttribute("title");
+  target.removeAttribute(JP_MARK_ATTR);
+  delete target.dataset.jobpilotPrevOutline;
+  delete target.dataset.jobpilotPrevOffset;
+  delete target.dataset.jobpilotPrevTitle;
+}
+
+function jpClearMarks() {
+  for (const el of jpQueryAll(`[${JP_MARK_ATTR}]`)) jpUnmark(el);
+}
+
+// ---------- Undo ----------
+
+function jpNativeSet(el, value) {
+  const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype
+    : el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+  if (setter) setter.call(el, value); else el.value = value;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+// Record how a field looked before we change it.
+function jpSnapshot(kind, el, group) {
+  if (kind === "radio") {
+    const previous = (group || []).find((r) => r.checked) || null;
+    jpUndoStack.push(() => {
+      if (previous) { if (!previous.checked) previous.click(); }
+      else for (const r of group || []) if (r.checked) { r.checked = false; r.dispatchEvent(new Event("change", { bubbles: true })); }
+    });
+  } else if (kind === "checkbox") {
+    const was = el.checked;
+    jpUndoStack.push(() => { if (el.checked !== was) el.click(); });
+  } else if (kind === "file") {
+    jpUndoStack.push(() => {
+      try { el.value = ""; } catch { /* some sites lock the input */ }
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  } else if (el && "value" in el) {
+    const was = el.value;
+    jpUndoStack.push(() => { if (el.value !== was) jpNativeSet(el, was); });
+  }
+}
+
+function jpUndoAll() {
+  const steps = jpUndoStack.reverse();
+  jpUndoStack = [];
+  let undone = 0;
+  for (const step of steps) {
+    try { step(); undone++; } catch (err) { console.warn("[JobPilot] Undo step failed:", err.message); }
+  }
+  jpClearMarks();
+  jpFillRecords.clear();
+  jpHideChecklist();
+  jpToast(`Undid ${undone} change${undone === 1 ? "" : "s"}.`, "info");
+}
+
+// ---------- Learning from corrections ----------
+
+function jpFieldIdFor(el) {
+  const tagged = el.closest?.(`[${FIELD_ATTR}]`) || (el.hasAttribute?.(FIELD_ATTR) ? el : null);
+  if (tagged) return tagged.getAttribute(FIELD_ATTR);
+  return el.getAttribute?.(GROUP_ATTR) || null;
+}
+
+function jpCurrentValue(id, el) {
+  const meta = fieldRegistry[id];
+  if (!meta) return "";
+  if (meta.kind === "radio") {
+    const checked = jpQueryAll(`[${GROUP_ATTR}="${CSS.escape(id)}"]`).find((r) => r.checked);
+    return checked ? getLabelForElement(checked) : "";
+  }
+  if (meta.kind === "checkbox") return el.checked ? "Yes" : "No";
+  if (el.tagName === "SELECT") return el.selectedOptions?.[0]?.textContent?.trim() || "";
+  return el.value || "";
+}
+
+let jpLearnTimers = new Map();
+function jpOnUserEdit(event) {
+  if (!event.isTrusted) return;
+  const el = event.target;
+  const id = jpFieldIdFor(el);
+  if (!id || !jpFillRecords.has(id)) return;
+  const record = jpFillRecords.get(id);
+  clearTimeout(jpLearnTimers.get(id));
+  jpLearnTimers.set(id, setTimeout(() => {
+    const value = jpCurrentValue(id, el);
+    if (!value || value === record.value) return;
+    record.value = value;
+    record.source = "correction";
+    jpMark(record.el || el, "correction");
+    const field = jpFieldsById.get(id);
+    if (field) {
+      chrome.runtime.sendMessage({ type: "LEARN_ANSWER", field, value, resumeId: jpCurrentResume?.resumeId })
+        .catch(() => {});
+    }
+    if (jpChecklistState) jpRenderChecklist();
+  }, 600));
+}
+
+for (const type of ["change", "focusout"]) document.addEventListener(type, jpOnUserEdit, true);
+
+// ---------- Resume file attachment ----------
+
+function jpResumeFileInputs() {
+  return jpQueryAll("input[type='file']").filter((input) => {
+    const context = [
+      input.name, input.id, input.getAttribute("aria-label"), input.accept,
+      input.closest("label, fieldset, [class*='field'], [class*='upload'], [data-field-path]")?.textContent?.slice(0, 200),
+    ].join(" ").toLowerCase();
+    return /resume|cv\b|curriculum/.test(context) && !/cover/.test(context.replace(/resume.*$/, ""));
+  });
+}
+
+function jpBase64ToFile({ name, type, data }) {
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  return new File([bytes], name, { type: type || "application/octet-stream" });
+}
+
+// Returns "attached" | "unavailable" (no stored file) | "none" (no field) | "blocked".
+async function jpAttachResume(resumeId) {
+  const inputs = jpResumeFileInputs().filter((input) => !input.files?.length);
+  if (!inputs.length) return jpResumeFileInputs().some((i) => i.files?.length) ? "attached" : "none";
+  const stored = await chrome.runtime.sendMessage({ type: "GET_RESUME_FILE", resumeId }).catch(() => null);
+  if (!stored?.data) return "unavailable";
+  const input = inputs[0];
+  try {
+    const transfer = new DataTransfer();
+    transfer.items.add(jpBase64ToFile(stored));
+    jpSnapshot("file", input);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return input.files?.length ? "attached" : "blocked";
+  } catch (err) {
+    console.warn("[JobPilot] Could not attach resume:", err.message);
+    return "blocked";
+  }
+}
+
+// ---------- Multi-step session ----------
+
+function jpSaveSession(resume) {
+  try {
+    sessionStorage.setItem(JP_SESSION_KEY, JSON.stringify({ resumeId: resume?.resumeId, name: resume?.name, at: Date.now() }));
+  } catch { /* storage may be blocked on some sites */ }
+}
+
+function jpLoadSession() {
+  try {
+    const session = JSON.parse(sessionStorage.getItem(JP_SESSION_KEY) || "null");
+    return session && Date.now() - session.at < JP_SESSION_MS ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+let jpStepObserver = null;
+let jpStepTimer = null;
+let jpStepOffered = false;
+
+function jpUntaggedEmptyFields() {
+  return jpQueryAll("input, textarea, select").filter((el) => {
+    if (jpSeenInputs.has(el) || el.hasAttribute(FIELD_ATTR) || el.hasAttribute(GROUP_ATTR)) return false;
+    if (["hidden", "submit", "button", "file", "image", "reset"].includes((el.type || "").toLowerCase())) return false;
+    if (!isVisible(el)) return false;
+    return el.type === "radio" || el.type === "checkbox" ? !el.checked : !el.value;
+  });
+}
+
+// Watch for the next step of a multi-page application (same page, new fields).
+function jpWatchForNextStep() {
+  if (jpStepObserver || !document.body) return;
+  jpStepObserver = new MutationObserver(() => {
+    if (jpStepOffered || jpAutofillInProgress) return;
+    clearTimeout(jpStepTimer);
+    jpStepTimer = setTimeout(jpCheckNextStep, 900);
+  });
+  jpStepObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+async function jpCheckNextStep() {
+  if (jpStepOffered || jpAutofillInProgress || !jpLoadSession()) return;
+  if (jpUntaggedEmptyFields().length < 2) return;
+  jpStepOffered = true; // cleared by the next field scan (detectFields)
+  jpHideChecklist(); // it describes the previous step and would cover the prompt
+  const { autoFillEnabled } = await chrome.storage.local.get("autoFillEnabled");
+  if (autoFillEnabled === true) {
+    jpToast("Next step detected — continuing autofill…", "info");
+    await runAutofillFromButton(true);
+  } else {
+    jpToast("Next step detected.", "info", { label: "Fill this step", run: () => runAutofillFromButton(false) });
+  }
+}
+
+// ---------- Checklist panel ----------
+
+const JP_PANEL_ID = "jobpilot-checklist";
+
+function jpHideChecklist() {
+  document.getElementById(JP_PANEL_ID)?.remove();
+  jpChecklistState = null;
+}
+
+function jpShowChecklist(state) {
+  jpChecklistState = state;
+  jpRenderChecklist();
+}
+
+function jpFocusField(id) {
+  const record = jpFillRecords.get(id);
+  const meta = fieldRegistry[id];
+  const el = record?.el || (meta ? jpResolveField(id, meta) : null) ||
+    jpQueryOne(`[${GROUP_ATTR}="${CSS.escape(id)}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (typeof el.focus === "function") el.focus({ preventScroll: true });
+}
+
+function jpRenderChecklist() {
+  const state = jpChecklistState;
+  if (!state) return;
+  document.getElementById(JP_PANEL_ID)?.remove();
+  const host = document.createElement("div");
+  host.id = JP_PANEL_ID;
+  Object.assign(host.style, { all: "initial", position: "fixed", right: "20px", bottom: "80px", zIndex: "2147483647" });
+  const root = host.attachShadow({ mode: "open" });
+  const records = [...jpFillRecords.entries()].map(([id, r]) => ({ id, ...r }));
+  const known = records.filter((r) => ["profile", "memory", "correction"].includes(r.source));
+  const review = records.filter((r) => ["ai", "draft", "library"].includes(r.source));
+  const needs = state.needs || [];
+  const short = (text) => {
+    const t = String(text || "").replace(/\s+/g, " ").trim();
+    return t.length > 60 ? `${t.slice(0, 57)}…` : t;
+  };
+  const resume = jpCurrentResume;
+  const attach = {
+    attached: "📎 Resume file attached",
+    unavailable: "📎 Attach your resume file (upload it once in JobPilot to attach automatically)",
+    blocked: "📎 This site blocked automatic upload — attach your resume manually",
+    none: "",
+  }[state.attach || "none"];
+  root.innerHTML = `
+    <style>
+      .panel { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1a1a2e;
+        width: 320px; max-height: 70vh; overflow: auto; background: #fff; border-radius: 12px;
+        box-shadow: 0 8px 28px rgba(0,0,0,.22); padding: 12px 14px; }
+      .head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 8px; }
+      .close { border: none; background: none; font-size: 18px; cursor: pointer; color: #64748b; }
+      .row { margin: 6px 0; }
+      .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+      ul { margin: 4px 0 0 0; padding-left: 18px; }
+      li { margin: 3px 0; }
+      a { color: #2563eb; cursor: pointer; text-decoration: underline; }
+      .mini { border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 6px; font-size: 11px; padding: 1px 6px; margin-left: 4px; cursor: pointer; }
+      .resume { background: #f1f5f9; border-radius: 8px; padding: 6px 8px; margin: 8px 0; }
+      select { font-size: 12px; margin-left: 4px; }
+      .actions { display: flex; gap: 8px; margin-top: 10px; }
+      .btn { flex: 1; border: none; border-radius: 8px; padding: 8px; font-weight: 600; cursor: pointer; }
+      .undo { background: #e2e8f0; color: #1a1a2e; } .done { background: #4a3aff; color: #fff; }
+    </style>
+    <div class="panel" role="dialog" aria-label="JobPilot autofill checklist">
+      <div class="head"><span>✨ JobPilot · Filled ${records.length} field${records.length === 1 ? "" : "s"}</span>
+        <button class="close" aria-label="Close">×</button></div>
+      ${resume?.name ? `<div class="resume">Resume: <b>${jpEscape(resume.name)}</b>${
+        resume.scores?.length > 1 ? ` · ${resume.scores.find((s) => s.id === resume.resumeId)?.score ?? "?"}% match
+          <select class="pick" aria-label="Change resume">${resume.scores.map((s) =>
+            `<option value="${jpEscape(s.id)}" ${s.id === resume.resumeId ? "selected" : ""}>${jpEscape(s.name)} (${s.score}%)</option>`).join("")}
+          </select>` : ""}</div>` : ""}
+      <div class="row"><span class="dot" style="background:#16a34a"></span>${known.length} from your profile and saved answers</div>
+      ${review.length ? `<div class="row"><span class="dot" style="background:#2563eb"></span>${review.length} AI answer${review.length === 1 ? "" : "s"} to review
+        <ul>${review.map((r) => `<li><a data-go="${jpEscape(r.id)}">${jpEscape(short(r.label))}</a>${
+          r.source === "draft" || r.source === "library"
+            ? ` <button class="mini" data-draft="shorter" data-id="${jpEscape(r.id)}">Shorter</button><button class="mini" data-draft="longer" data-id="${jpEscape(r.id)}">Longer</button><button class="mini" data-save="${jpEscape(r.id)}">Save ⭐</button>`
+            : ""}</li>`).join("")}</ul></div>` : ""}
+      ${needs.length ? `<div class="row"><span class="dot" style="background:#d97706"></span>${needs.length} need you
+        <ul>${needs.map((n) => `<li><a data-go="${jpEscape(n.id)}">${jpEscape(short(n.label))}</a></li>`).join("")}</ul></div>` : ""}
+      ${attach ? `<div class="row">${jpEscape(attach)}</div>` : ""}
+      <div class="row" style="color:#64748b">Review everything, then submit the application yourself.</div>
+      <div class="actions"><button class="btn undo">Undo all</button><button class="btn done">Done</button></div>
+    </div>`;
+  root.querySelector(".close").onclick = jpHideChecklist;
+  root.querySelector(".done").onclick = jpHideChecklist;
+  root.querySelector(".undo").onclick = jpUndoAll;
+  root.querySelectorAll("[data-go]").forEach((a) => (a.onclick = () => jpFocusField(a.dataset.go)));
+  root.querySelectorAll("[data-draft]").forEach((b) => (b.onclick = () => jpReviseDraft(b.dataset.id, b.dataset.draft, b)));
+  root.querySelectorAll("[data-save]").forEach((b) => (b.onclick = () => jpSaveDraft(b.dataset.save, b)));
+  const pick = root.querySelector(".pick");
+  if (pick) pick.onchange = () => jpSwitchResume(pick.value);
+  document.documentElement.appendChild(host);
+}
+
+function jpEscape(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function jpReviseDraft(id, mode, button) {
+  const record = jpFillRecords.get(id);
+  const el = record?.el;
+  if (!el) return;
+  button.disabled = true;
+  button.textContent = "…";
+  try {
+    const { profile, uploadedResumeText } = await chrome.storage.local.get(["profile", "uploadedResumeText"]);
+    const result = await chrome.runtime.sendMessage({
+      type: "REVISE_DRAFT", question: record.label, answer: el.value, mode,
+      jobContext: jpLastJobContext, profile: [profile, jpCurrentResume?.text || uploadedResumeText].filter(Boolean).join("\n\n"),
+    });
+    if (result?.error || !result?.answer) throw new Error(result?.error || "No draft returned.");
+    jpSnapshot("text", el);
+    fillText(el, result.answer);
+    record.value = result.answer;
+    record.source = "draft";
+    jpMark(el, "draft");
+    jpToast(mode === "shorter" ? "Made it shorter." : "Expanded the answer.", "success");
+  } catch (err) {
+    jpToast(`Couldn't revise: ${err.message}`, "error");
+  } finally {
+    jpRenderChecklist();
+  }
+}
+
+async function jpSaveDraft(id, button) {
+  const record = jpFillRecords.get(id);
+  const answer = record?.el?.value;
+  if (!answer) return;
+  await chrome.runtime.sendMessage({ type: "SAVE_TO_LIBRARY", question: record.label, answer }).catch(() => {});
+  button.textContent = "Saved ✓";
+  button.disabled = true;
+}
+
+async function jpSwitchResume(resumeId) {
+  await chrome.runtime.sendMessage({
+    type: "REMEMBER_RESUME_CHOICE", jobContext: jpLastJobContext, host: location.hostname, resumeId,
+  }).catch(() => {});
+  jpUndoAll();
+  jpForcedResumeId = resumeId;
+  await runAutofillFromButton(false);
+}
+
+let jpForcedResumeId = null;
+
+// Ask the user to choose when two resumes match the job about equally well.
+function jpAskResume(pick) {
+  return new Promise((resolve) => {
+    document.getElementById(JP_PANEL_ID)?.remove();
+    const host = document.createElement("div");
+    host.id = JP_PANEL_ID;
+    Object.assign(host.style, { all: "initial", position: "fixed", right: "20px", bottom: "80px", zIndex: "2147483647" });
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <style>
+        .panel { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; width: 300px;
+          background: #fff; color: #1a1a2e; border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.22); padding: 12px 14px; }
+        button { display: block; width: 100%; margin-top: 8px; padding: 8px; border-radius: 8px; border: 1px solid #c7d2fe;
+          background: #eef2ff; cursor: pointer; font-weight: 600; text-align: left; }
+      </style>
+      <div class="panel" role="dialog" aria-label="Choose a resume"><b>Which resume for this job?</b>
+        ${pick.scores.slice(0, 3).map((s) => `<button data-id="${jpEscape(s.id)}">${jpEscape(s.name)} · ${s.score}% match</button>`).join("")}
+      </div>`;
+    const finish = (id) => { host.remove(); resolve(id); };
+    root.querySelectorAll("button").forEach((b) => (b.onclick = () => finish(b.dataset.id)));
+    setTimeout(() => host.isConnected && finish(pick.resumeId), 60000);
+    document.documentElement.appendChild(host);
+  });
+}
+
+// Resume chosen for this application, asking only when it's a close call.
+async function jpChooseResume(jobContext, isAuto) {
+  jpLastJobContext = jobContext;
+  const session = jpLoadSession();
+  const forced = jpForcedResumeId || session?.resumeId;
+  jpForcedResumeId = null;
+  const pick = await chrome.runtime.sendMessage({
+    type: "PICK_RESUME", jobContext, host: location.hostname,
+  }).catch(() => null);
+  if (!pick || pick.error || !pick.resumeId) return pick && !pick.error ? pick : null;
+  let resumeId = pick.resumeId;
+  if (forced && pick.scores.some((s) => s.id === forced)) resumeId = forced;
+  else if (pick.ambiguous && !isAuto) {
+    resumeId = await jpAskResume(pick);
+    await chrome.runtime.sendMessage({
+      type: "REMEMBER_RESUME_CHOICE", jobContext, host: location.hostname, resumeId,
+    }).catch(() => {});
+  }
+  if (resumeId === pick.resumeId) return pick;
+  const { resumes = [] } = await chrome.storage.local.get("resumes");
+  const chosen = resumes.find((r) => r.id === resumeId);
+  return { ...pick, resumeId, name: chosen?.name || pick.name, text: chosen?.text || pick.text };
+}

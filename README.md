@@ -21,13 +21,19 @@ JobPilot is a Chrome extension that uses an LLM to fill out online job applicati
   - The floating button fills the page directly.
 - **Automatic filling is opt-in.** It's off by default. You turn it on with a separate, explicit consent, and it resets on sign-out or when you switch accounts.
 - **Resume parsing in the browser.** PDF (pdf.js) and DOCX (JSZip) files are parsed locally. The extension detects protected and scanned PDFs.
+- **Several resumes, matched per job.** Keep up to five resumes. An on-device skills matcher scores each one against the job description, picks the best, and asks only when two are close. A manual choice is remembered per company. The original file stays in the browser and is attached to the application's resume field.
+- **Review on the page.** Filled fields are outlined by source (green: profile or saved answers, blue: AI, amber: needs you). A checklist links to every field to review, and **Undo all** restores the page exactly.
+- **Learns from corrections.** When you change a filled answer, JobPilot reuses your version next time instead of asking the AI. Answers are remembered per resume.
+- **Long answers.** AI drafts for "Why us?" style questions can be made shorter or longer, and saved to a personal answer library that is reused on similar questions.
+- **Multi-step forms.** After a fill, new fields that appear on the next step (or the next page within 30 minutes) trigger a "Fill this step" prompt.
 
 ## Architecture
 
 ```
 ┌──────────────────────── Chrome extension (MV3) ─────────────────────────┐
 │  content.js      detects fields, expands sections, applies answers       │
-│  sidepanel.js    profile, resume upload, review/apply, consent controls  │
+│  content-ui.js   highlights, undo, checklist, corrections, file attach   │
+│  sidepanel.js    resumes, match score, review/apply, consent controls    │
 │  background.js   service worker; authenticated calls to the backend      │
 │  auth.js         Google sign-in (chrome.identity.launchWebAuthFlow)      │
 └───────────────────────────────┬──────────────────────────────────────────┘
@@ -35,6 +41,7 @@ JobPilot is a Chrome extension that uses an LLM to fill out online job applicati
 ┌───────────────────────────────▼──────────── Vercel serverless ───────────┐
 │  /api/parse-resume   resume → structured experience/education entries    │
 │  /api/generate       fields + profile + job context → suggestions        │
+│  /api/draft          shorten / expand / rewrite a long answer            │
 │  /api/profile        per-user profile sync (GET / PUT / DELETE)          │
 │  /api/health         config + available model check                      │
 │                                                                          │
@@ -95,6 +102,7 @@ npm run test:browser     # loads the real extension in Chromium
 The browser tests load the unpacked extension and check field values on the page, not just success messages:
 - `JOBPILOT_TEST_RESUME=<local pdf>` checks that uploading a resume fills Quick Details. The PDF is read locally, and the backend is mocked.
 - `JOBPILOT_LIVE_TEST=1` opens a live Ashby application (Plaid). It checks field labels and filled values, and blocks every non-GET request so nothing is ever submitted.
+- `features.spec.cjs` runs against a local two-step job page: resume matching and file attachment, highlights, the checklist, undo, learning from a correction, and "Fill this step".
 
 ## Privacy
 

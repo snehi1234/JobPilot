@@ -98,10 +98,42 @@ test("any profile change produces a new version, invalidating remembered answers
   assert.notEqual(a, await profileVersion(profile, "resume text updated"));
 });
 
+test("user corrections win over profile rules and memory; saved long answers fill drafts", async () => {
+  const { resolveLocally, recordCorrection, rememberAnswers } = await load();
+  const city = f(1, "City");
+  const auth = f(2, "Are you legally authorized to work in the US?", "radio", { options: ["Yes", "No"] });
+  const why = f(3, "Why do you want to work at Plaid?", "text", { tag: "textarea" });
+  let corrections = recordCorrection(undefined, city, "  Redmond ");
+  corrections = recordCorrection(corrections, auth, "No");
+  assert.equal(recordCorrection(corrections, f(9, "Referrer name"), "Sam"), corrections, "non-reusable fields are not learned");
+  assert.equal(recordCorrection(corrections, city, "   "), corrections, "blank edits are ignored");
+  const memory = rememberAnswers({ entries: {} }, [auth], [{ id: "2", value: "Yes", confidence: "high" }]);
+  const library = [{ question: "Why do you want to work at Stripe?", answer: "Saved answer" }];
+  const { suggestions, pending } = resolveLocally([city, auth, why], { structured: profile, memory, corrections, library, context: {} });
+  assert.deepEqual(suggestions.map((s) => [s.id, s.value, s.source]), [
+    ["1", "Redmond", "correction"], ["2", "No", "correction"], ["3", "Saved answer", "library"],
+  ]);
+  assert.equal(pending.length, 0);
+});
+
+test("library answers need a close question match and only fill long questions", async () => {
+  const { findLibraryAnswer, isLongQuestion } = await load();
+  const library = [
+    { question: "Why are you interested in this role?", answer: "A" },
+    { question: "Describe a challenging project you led.", answer: "B" },
+  ];
+  assert.equal(findLibraryAnswer(library, "Why are you interested in this position?")?.answer, "A");
+  assert.equal(findLibraryAnswer(library, "Why are you interested in this role at Plaid?")?.answer, "A");
+  assert.equal(findLibraryAnswer(library, "Describe a challenging project you led")?.answer, "B");
+  assert.equal(findLibraryAnswer(library, "What is your expected salary?"), null);
+  assert.equal(isLongQuestion(f(1, "Tell us about yourself")), true);
+  assert.equal(isLongQuestion(f(2, "LinkedIn Profile")), false);
+});
+
 test("user-facing extension pages never name internal vendors or plans", () => {
   const fs = require("node:fs");
   const root = path.join(__dirname, "..");
-  for (const file of ["sidepanel.html", "onboarding.html", "privacy.html", "terms.html", "sidepanel.js", "content.js",
+  for (const file of ["sidepanel.html", "onboarding.html", "privacy.html", "terms.html", "sidepanel.js", "content.js", "content-ui.js",
     "backend/public/index.html", "backend/public/privacy.html", "backend/public/terms.html"]) {
     const text = fs.readFileSync(path.join(root, file), "utf8");
     assert.doesNotMatch(text, /\b(groq|supabase|vercel|gemini|gpt-oss)\b|free[- ]tier|free plan|paid provider/i, file);

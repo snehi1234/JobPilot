@@ -34,12 +34,12 @@ export async function cloudLoad() {
 }
 
 // Save the user's profile to the cloud. Returns true on success.
-export async function cloudSave({ structured, profileText, resumeText }) {
+export async function cloudSave({ structured, profileText, resumeText, resumes }) {
   if (!CLOUD_ENABLED) return false;
     const res = await fetch(`${BACKEND_URL}/api/profile`, {
       method: "PUT",
       headers: await authHeaders(),
-      body: JSON.stringify({ structured, profileText, resumeText }),
+      body: JSON.stringify({ structured, profileText, resumeText, resumes }),
     });
     await checkResponse(res);
     return true;

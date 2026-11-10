@@ -60,7 +60,9 @@ async function contentHarness(initial = {}) {
       querySelectorAll: () => [],
       querySelector: () => null,
       getElementById: () => null,
+      addEventListener() {},
     },
+    sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     console: { log() {}, warn() {}, error: (...args) => errors.push(args) },
     setInterval: () => 1,
     clearInterval() {},
@@ -84,9 +86,13 @@ async function contentHarness(initial = {}) {
       },
     },
   });
+  vm.runInContext(readSource("content-ui.js"), context);
   vm.runInContext(readSource("content.js"), context);
   await flush();
   context.jpToast = (...args) => toasts.push(args);
+  context.jpChooseResume = async () => ({ resumeId: "default", name: "Resume", text: "", reason: "only" });
+  context.jpFinishAutofill = async () => {};
+  context.jpShowChecklist = () => {};
   context.expandRepeatableSections = async () => { harness.expansions++; return 0; };
   context.detectFields = () => [{ id: "name", kind: "text", label: "Name" }];
   context.scrapeJobContext = () => ({ title: "Test role" });

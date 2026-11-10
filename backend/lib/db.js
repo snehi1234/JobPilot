@@ -49,7 +49,26 @@ export async function upsertProfile(userSub, data) {
     resume_text: data.resumeText || "",
     updated_at: new Date().toISOString(),
   };
-  const res = await fetch(`${url}/rest/v1/${TABLE}`, {
+  if (data.resumes !== undefined) row.resumes = data.resumes;
+  let res = await writeProfileRow(url, key, row);
+  // Databases not yet migrated lack the resumes column; keep saving the rest.
+  if (!res.ok && row.resumes !== undefined && res.status === 400) {
+    const body = await res.clone().text();
+    if (/resumes/.test(body)) {
+      const { resumes, ...rest } = row;
+      res = await writeProfileRow(url, key, rest);
+    }
+  }
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`DB write failed: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const rows = await res.json();
+  return rows[0] || row;
+}
+
+function writeProfileRow(url, key, row) {
+  return fetch(`${url}/rest/v1/${TABLE}`, {
     method: "POST",
     headers: {
       apikey: key,
@@ -59,12 +78,6 @@ export async function upsertProfile(userSub, data) {
     },
     body: JSON.stringify(row),
   });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`DB write failed: ${res.status} ${t.slice(0, 200)}`);
-  }
-  const rows = await res.json();
-  return rows[0] || row;
 }
 
 // Lightweight connectivity/schema check used by /api/health. Returns only

@@ -22,6 +22,11 @@ const els = {
   fabToggle: document.getElementById("fabToggle"),
   autoFillToggle: document.getElementById("autoFillToggle"),
   fillHint: document.getElementById("fillHint"),
+  resumeList: document.getElementById("resumeList"),
+  replaceFile: document.getElementById("replaceFile"),
+  matchCard: document.getElementById("matchCard"),
+  matchScores: document.getElementById("matchScores"),
+  matchSkills: document.getElementById("matchSkills"),
 };
 
 // IDs of the structured "Quick Details" fields (all prefixed sf_).
@@ -74,6 +79,20 @@ let statusTimer;
 // profile textbox so we don't dump the whole resume into the UI, but still use
 // it for filling. Persisted in chrome.storage.local.
 let uploadedResumeText = "";
+// All saved resumes: [{ id, name, text, fileName, fileType, updatedAt }].
+// uploadedResumeText always mirrors the default resume's text.
+let resumes = [];
+let defaultResumeId = null;
+
+// Profiles from before multiple resumes become a single "Resume" with id
+// "default", which matches the key the background already uses for them.
+function normalizeResumes(list, legacyText) {
+  const valid = Array.isArray(list)
+    ? list.filter((r) => r && r.id && typeof r.text === "string").slice(0, 5)
+    : [];
+  if (valid.length) return valid;
+  return legacyText ? [{ id: "default", name: "Resume", text: legacyText, updatedAt: Date.now() }] : [];
+}
 
 // ---------- PDF extraction ----------
 
@@ -147,10 +166,12 @@ async function extractDocxText(file) {
   return lines.join("\n").trim();
 }
 
-async function handleResumeUpload(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
+const MAX_RESUMES = 5;
+const MAX_RESUME_FILE_BYTES = 5 * 1024 * 1024;
 
+// Read a resume file into text. Shows a status and returns null when the
+// file can't be used.
+async function readResumeFile(file) {
   const isDocx =
     file.name.toLowerCase().endsWith(".docx") ||
     file.type ===
@@ -159,79 +180,288 @@ async function handleResumeUpload(event) {
 
   if (!isDocx && !isPdf) {
     showStatus("Please upload a .pdf or .docx resume file.", "error");
-    return;
+    return null;
   }
-
-  els.fileName.textContent = `Reading ${file.name}…`;
-  showStatus("Extracting text from your resume…", "info");
-
   try {
     const text = isDocx ? await extractDocxText(file) : await extractPdfText(file);
-
-    // Case 1: rights-protected PDF (content is that warning message). Only
-    // relevant for PDFs — .docx files don't have this failure mode.
+    // Rights-protected PDFs only expose a warning page; .docx can't hit this.
     if (!isDocx && (looksProtected(text) || !text)) {
-      els.fileName.textContent = "";
       showStatus(
         !text
           ? "Couldn't extract text — this PDF may be a scanned image. Paste your details manually below."
           : "This resume is a PROTECTED PDF (Microsoft/DRM). Its text is locked, so it can't be read. Please: open the PDF, use 'Save As' or 'Print → Save as PDF' to make an unprotected copy, then upload that — or just paste your resume text below.",
         "error"
       );
-      return;
+      return null;
     }
     if (isDocx && !text) {
-      els.fileName.textContent = "";
-      showStatus(
-        "Couldn't extract text from this Word document. Please paste your resume text below.",
-        "error"
-      );
-      return;
+      showStatus("Couldn't extract text from this Word document. Please paste your resume text below.", "error");
+      return null;
     }
-
-    uploadedResumeText = text;
-    const initial = mergeResumeDetails(readStructured(), extractResumeDetails(text));
-    STRUCTURED_IDS.forEach(key => { if (sfEl(key)) sfEl(key).value = initial[key] || ""; });
-    await chrome.storage.local.set({ uploadedResumeText, structured: readStructured(), profileSyncPending: true });
-    showStatus("Resume text read. Extracting profile details…", "info");
-    let warning = "";
-    try {
-      const parsed = await chrome.runtime.sendMessage({ type: "COUNT_ENTRIES", profile: text });
-      if (parsed?.error) throw new Error(parsed.error);
-      if (parsed?.warning) warning = parsed.warning;
-      const merged = mergeResumeDetails(readStructured(), parsed?.structured);
-      STRUCTURED_IDS.forEach(key => { if (sfEl(key)) sfEl(key).value = merged[key] || ""; });
-    } catch (err) {
-      warning = `AI profile extraction failed: ${err.message}. Contact details found locally are still available.`;
-      console.error("[JobPilot] Resume profile extraction failed:", err.message);
-    }
-    const synced = await save();
-    els.fileName.textContent = `✓ ${file.name}`;
-    showStatus(
-      `Resume imported. Review Quick Details; fields not present in your resume stay blank. ` +
-      (synced ? "Saved and synced." : "Saved on this device only; cloud sync failed.") +
-      (warning ? ` ${warning}` : ""),
-      synced && !warning ? "success" : "error"
-    );
+    return { text, type: isDocx ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf" };
   } catch (err) {
     console.error("[JobPilot] Resume import failed:", err?.stack || err?.message || err);
-    els.fileName.textContent = "";
     if (err?.code === "PROTECTED") {
       showStatus(
         "This PDF is password/encryption protected and can't be read. Make an unprotected copy (Print → Save as PDF) or paste your resume text below.",
         "error"
       );
-    } else if (isDocx) {
-      showStatus(
-        "Failed to read the Word document. Please paste your details manually below.",
-        "error"
-      );
     } else {
-      showStatus("Failed to read the PDF. Please paste your details manually below.", "error");
+      showStatus(`Failed to read the ${isDocx ? "Word document" : "PDF"}. Please paste your details manually below.`, "error");
     }
+    return null;
   }
 }
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function defaultResumeName(fileName) {
+  const base = String(fileName || "Resume").replace(/\.(pdf|docx)$/i, "").replace(/[_-]+/g, " ").trim();
+  return (base || "Resume").slice(0, 60);
+}
+
+function newResumeId() {
+  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// Keep the original file on this device only so it can be attached to
+// applications; only the extracted text is synced.
+async function storeResumeFile(id, file) {
+  if (file.size > MAX_RESUME_FILE_BYTES) return false;
+  const data = await fileToBase64(file);
+  const { resumeFiles = {} } = await chrome.storage.local.get("resumeFiles");
+  await chrome.storage.local.set({ resumeFiles: { ...resumeFiles, [id]: { name: file.name, type: file.type || "application/pdf", data } } });
+  return true;
+}
+
+function syncDefaultResumeText() {
+  const def = resumes.find((r) => r.id === defaultResumeId) || resumes[0];
+  if (def && def.id !== defaultResumeId) defaultResumeId = def.id;
+  uploadedResumeText = def?.text || "";
+}
+
+async function handleResumeUpload(event, replaceId = null) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (!replaceId && resumes.length >= MAX_RESUMES) {
+    showStatus(`You can keep up to ${MAX_RESUMES} resumes. Delete or replace one first.`, "error");
+    return;
+  }
+
+  els.fileName.textContent = `Reading ${file.name}…`;
+  showStatus("Extracting text from your resume…", "info");
+  const read = await readResumeFile(file);
+  els.fileName.textContent = "";
+  if (!read) return;
+
+  const isFirst = resumes.length === 0 || (replaceId && replaceId === defaultResumeId);
+  let entry;
+  if (replaceId) {
+    entry = resumes.find((r) => r.id === replaceId);
+    Object.assign(entry, { text: read.text, fileName: file.name, fileType: read.type, updatedAt: Date.now() });
+  } else {
+    entry = { id: newResumeId(), name: defaultResumeName(file.name), text: read.text, fileName: file.name, fileType: read.type, updatedAt: Date.now() };
+    resumes.push(entry);
+    if (!defaultResumeId) defaultResumeId = entry.id;
+  }
+  const fileStored = await storeResumeFile(entry.id, file).catch(() => false);
+  syncDefaultResumeText();
+  renderResumeList();
+
+  const initial = mergeResumeDetails(readStructured(), extractResumeDetails(read.text));
+  STRUCTURED_IDS.forEach(key => { if (sfEl(key)) sfEl(key).value = initial[key] || ""; });
+  await chrome.storage.local.set({ resumes, defaultResumeId, uploadedResumeText, structured: readStructured(), profileSyncPending: true });
+
+  let warning = fileStored ? "" : " The file is over 5 MB, so it won't be attached automatically.";
+  // Only the default resume fills Quick Details with AI; others just add blanks.
+  if (isFirst) {
+    showStatus("Resume text read. Extracting profile details…", "info");
+    try {
+      const parsed = await chrome.runtime.sendMessage({ type: "COUNT_ENTRIES", profile: read.text });
+      if (parsed?.error) throw new Error(parsed.error);
+      if (parsed?.warning) warning += ` ${parsed.warning}`;
+      const merged = mergeResumeDetails(readStructured(), parsed?.structured);
+      STRUCTURED_IDS.forEach(key => { if (sfEl(key)) sfEl(key).value = merged[key] || ""; });
+    } catch (err) {
+      warning += ` Profile extraction failed: ${err.message}. Contact details found locally are still available.`;
+      console.error("[JobPilot] Resume profile extraction failed:", err.message);
+    }
+  }
+  const synced = await save();
+  showStatus(
+    `${replaceId ? "Resume replaced" : `Added "${entry.name}"`}. Review Quick Details; fields not present in your resume stay blank. ` +
+    (synced ? "Saved and synced." : "Saved on this device only; cloud sync failed.") +
+    warning,
+    synced && !warning ? "success" : "note"
+  );
+  refreshMatch();
+}
+
+async function persistResumes() {
+  syncDefaultResumeText();
+  await chrome.storage.local.set({ resumes, defaultResumeId, uploadedResumeText, profileSyncPending: true });
+  renderResumeList();
+  refreshMatch();
+}
+
+async function deleteResume(id) {
+  const entry = resumes.find((r) => r.id === id);
+  if (!entry || !confirm(`Delete the resume "${entry.name}"?`)) return;
+  resumes = resumes.filter((r) => r.id !== id);
+  if (defaultResumeId === id) defaultResumeId = resumes[0]?.id || null;
+  if (selectedResumeId === id) selectedResumeId = null;
+  const { resumeFiles = {}, answerMemory = {}, answerCorrections = {} } =
+    await chrome.storage.local.get(["resumeFiles", "answerMemory", "answerCorrections"]);
+  delete resumeFiles[id];
+  delete answerMemory[id];
+  delete answerCorrections[id];
+  await chrome.storage.local.set({ resumeFiles, answerMemory, answerCorrections });
+  await persistResumes();
+  save().catch(() => {});
+}
+
+let replaceTargetId = null;
+
+function renderResumeList() {
+  els.resumeList.innerHTML = "";
+  for (const resume of resumes) {
+    const row = document.createElement("div");
+    row.className = "resume-row";
+
+    const name = document.createElement("input");
+    name.type = "text";
+    name.value = resume.name;
+    name.maxLength = 60;
+    name.title = resume.fileName || "";
+    name.setAttribute("aria-label", "Resume name");
+    name.addEventListener("change", async () => {
+      resume.name = name.value.trim().slice(0, 60) || "Resume";
+      await persistResumes();
+      save().catch(() => {});
+    });
+
+    const def = document.createElement("label");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "defaultResume";
+    radio.checked = resume.id === defaultResumeId;
+    radio.addEventListener("change", async () => {
+      defaultResumeId = resume.id;
+      await persistResumes();
+      save().catch(() => {});
+    });
+    def.append(radio, "Default");
+    def.title = "Used when no resume clearly matches the job";
+
+    const replace = document.createElement("button");
+    replace.type = "button";
+    replace.textContent = "Replace";
+    replace.addEventListener("click", () => {
+      replaceTargetId = resume.id;
+      els.replaceFile.click();
+    });
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "del";
+    del.textContent = "✕";
+    del.title = "Delete this resume";
+    del.addEventListener("click", () => deleteResume(resume.id));
+
+    row.append(name, def, replace, del);
+    els.resumeList.appendChild(row);
+  }
+  els.resumeFile.disabled = resumes.length >= MAX_RESUMES;
+}
+
+// ---------- Match for the open job ----------
+
+// Resume chosen for the open job: the auto pick unless the user changed it.
+let lastPick = null;
+let selectedResumeId = null;
+let lastJobContext = null;
+
+async function refreshMatch() {
+  const tab = await getActiveTab().catch(() => null);
+  if (!tab?.id || !resumes.length) {
+    els.matchCard.classList.add("hidden");
+    return;
+  }
+  const jobContext = await chrome.tabs.sendMessage(tab.id, { type: "GET_JOB_CONTEXT" }).catch(() => null);
+  if (!jobContext) {
+    els.matchCard.classList.add("hidden");
+    return;
+  }
+  const host = (() => { try { return new URL(tab.url).hostname; } catch { return ""; } })();
+  const pick = await chrome.runtime.sendMessage({ type: "PICK_RESUME", jobContext, host }).catch(() => null);
+  if (!pick?.resumeId) {
+    els.matchCard.classList.add("hidden");
+    return;
+  }
+  if (lastJobContext?.title !== jobContext.title || lastPick?.resumeId !== pick.resumeId) selectedResumeId = null;
+  lastPick = { ...pick, host };
+  lastJobContext = jobContext;
+  renderMatch();
+}
+
+function renderMatch() {
+  const pick = lastPick;
+  const chosenId = selectedResumeId || pick.resumeId;
+  els.matchScores.innerHTML = "";
+  const informative = pick.scores.some((s) => s.jobSkillCount >= 3);
+  for (const s of pick.scores) {
+    const row = document.createElement("label");
+    row.className = `match-row${s.id === chosenId ? " best" : ""}`;
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "useResume";
+    radio.checked = s.id === chosenId;
+    radio.addEventListener("change", () => {
+      selectedResumeId = s.id;
+      chrome.runtime.sendMessage({ type: "REMEMBER_RESUME_CHOICE", jobContext: lastJobContext, host: pick.host, resumeId: s.id }).catch(() => {});
+      renderMatch();
+    });
+    const name = document.createElement("span");
+    name.textContent = s.name;
+    row.append(radio, name);
+    if (informative) {
+      const bar = document.createElement("span");
+      bar.className = "match-bar";
+      const fill = document.createElement("span");
+      fill.style.width = `${s.score}%`;
+      bar.appendChild(fill);
+      const pct = document.createElement("span");
+      pct.textContent = `${s.score}%`;
+      row.append(bar, pct);
+    }
+    els.matchScores.appendChild(row);
+  }
+  const chosen = pick.scores.find((s) => s.id === chosenId) || pick.scores[0];
+  if (!informative) {
+    els.matchSkills.textContent = "Not enough detail in the job description to score; using your default resume.";
+  } else {
+    const matched = (chosen.matched || []).slice(0, 8).join(", ");
+    const missing = (chosen.missing || []).slice(0, 6).join(", ");
+    els.matchSkills.textContent =
+      (matched ? `Matches: ${matched}. ` : "") +
+      (missing ? `Not on this resume: ${missing}.` : "") +
+      (pick.ambiguous && !selectedResumeId ? " Scores are close — pick the one you want." : "");
+  }
+  els.matchCard.classList.remove("hidden");
+}
+
+function selectedResume() {
+  const id = selectedResumeId || lastPick?.resumeId || defaultResumeId;
+  return resumes.find((r) => r.id === id) || resumes.find((r) => r.id === defaultResumeId) || resumes[0] || null;
+}
 // ---------- Helpers ----------
 
 function showStatus(message, type = "info") {
@@ -263,7 +493,7 @@ async function ensureContentScript(tabId) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["content.js"],
+        files: ["content-ui.js", "content.js"],
       });
       await new Promise((r) => setTimeout(r, 300));
       return true;
@@ -287,46 +517,40 @@ async function loadSaved() {
       console.error("[JobPilot] Could not load cloud profile:", err.message);
     }
   }
+  const local = await chrome.storage.local.get(["profile", "structured", "uploadedResumeText", "resumes", "defaultResumeId"]);
+
+  let profileText;
+  let structured;
   if (cloud) {
-    els.profile.value = cloud.profileText || "";
-    if (cloud.resumeText) {
-      uploadedResumeText = cloud.resumeText;
-      els.fileName.textContent = "✓ Resume on file";
-    }
-    if (cloud.structured) {
-      STRUCTURED_IDS.forEach((key) => {
-        const el = sfEl(key);
-        if (el && cloud.structured[key] != null) el.value = cloud.structured[key];
-      });
-    }
-    // Mirror to local storage so the floating button (content script) can use it.
-    await chrome.storage.local.set({
-      profile: cloud.profileText || "",
-      structured: cloud.structured || {},
-      uploadedResumeText: cloud.resumeText || "",
-    });
-    return;
+    profileText = cloud.profileText || "";
+    structured = cloud.structured || {};
+    // File names/types are kept from this device when the cloud copy lacks them.
+    const localById = new Map((local.resumes || []).map((r) => [r.id, r]));
+    resumes = normalizeResumes(cloud.resumes, cloud.resumeText).map((r) => ({
+      ...localById.get(r.id),
+      ...r,
+    }));
+    defaultResumeId = (cloud.resumes || []).find((r) => r.isDefault)?.id || local.defaultResumeId || null;
+    resumes = resumes.map(({ isDefault, ...rest }) => rest);
+  } else {
+    profileText = local.profile || "";
+    structured = local.structured || {};
+    resumes = normalizeResumes(local.resumes, local.uploadedResumeText);
+    defaultResumeId = local.defaultResumeId || null;
   }
+  if (!resumes.some((r) => r.id === defaultResumeId)) defaultResumeId = resumes[0]?.id || null;
+  syncDefaultResumeText();
 
-  const { profile, structured, uploadedResumeText: savedResume } =
-    await chrome.storage.local.get([
-      "profile",
-      "structured",
-      "uploadedResumeText",
-    ]);
-  if (profile) els.profile.value = profile;
-  if (savedResume) {
-    uploadedResumeText = savedResume;
-    els.fileName.textContent = "✓ Resume on file";
-  }
-  if (structured) {
-    STRUCTURED_IDS.forEach((key) => {
-      const el = sfEl(key);
-      if (el && structured[key] != null) el.value = structured[key];
-    });
-  }
+  els.profile.value = profileText;
+  STRUCTURED_IDS.forEach((key) => {
+    const el = sfEl(key);
+    if (el && structured[key] != null) el.value = structured[key];
+  });
+  renderResumeList();
+  // Mirror to local storage so the floating button (content script) can use it.
+  await chrome.storage.local.set({ profile: profileText, structured, uploadedResumeText, resumes, defaultResumeId });
+  refreshMatch();
 }
-
 // ---------- Save ----------
 
 async function save() {
@@ -338,16 +562,26 @@ async function save() {
     const structured = readStructured();
     const profileText = els.profile.value.trim();
     // Always keep local storage in sync (used by the floating button).
+    syncDefaultResumeText();
     await chrome.storage.local.set({
       profile: profileText,
       structured,
       uploadedResumeText,
+      resumes,
+      defaultResumeId,
     });
     // Also push to the cloud so it syncs across devices.
     await chrome.storage.local.set({ profileSyncPending: true });
     let synced = false;
     try {
-      synced = await cloudSave({ structured, profileText, resumeText: uploadedResumeText });
+      synced = await cloudSave({
+        structured,
+        profileText,
+        resumeText: uploadedResumeText,
+        resumes: resumes.map(({ id, name, text, fileName, fileType, updatedAt }) => ({
+          id, name, text, fileName, fileType, updatedAt, isDefault: id === defaultResumeId,
+        })),
+      });
     } catch (err) {
       console.error("[JobPilot] Cloud sync failed:", err.message);
       showStatus(`Saved on this device. Cloud sync failed: ${err.message}`, "error");
@@ -379,8 +613,9 @@ async function fillForm() {
   const structured = readStructured();
   const hasStructured = Object.values(structured).some((v) => v);
 
-  // Combine any typed notes with the uploaded resume text (kept out of the UI).
-  const profile = [typedProfile, uploadedResumeText]
+  // Combine any typed notes with the chosen resume's text (kept out of the UI).
+  const resume = selectedResume();
+  const profile = [typedProfile, resume?.text || uploadedResumeText]
     .filter(Boolean)
     .join("\n\n")
     .trim();
@@ -468,7 +703,23 @@ async function fillForm() {
 
     const fields = detectResponse?.fields || [];
     const jobContext = detectResponse?.jobContext || {};
-    currentTarget = { tabId: tab.id, frameId: detectResponse.frameId ?? 0, scanId: detectResponse.scanId };
+    currentTarget = {
+      tabId: tab.id,
+      frameId: detectResponse.frameId ?? 0,
+      scanId: detectResponse.scanId,
+      jobContext,
+      resume: resume
+        ? {
+            resumeId: resume.id,
+            name: resume.name,
+            text: resume.text,
+            reason: selectedResumeId ? "remembered" : lastPick?.reason || "default",
+            ambiguous: false,
+            count: resumes.length,
+            scores: lastPick?.scores || [],
+          }
+        : null,
+    };
 
     if (fields.length === 0) {
       showStatus("No form fields found on this page.", "error");
@@ -505,6 +756,7 @@ async function fillForm() {
       jobContext,
       structured,
       parsedEntries: reliableEntries,
+      resumeId: resume?.id,
     });
 
     if (aiResponse?.error) {
@@ -594,6 +846,8 @@ async function applyAll() {
       type: "APPLY_ANSWERS",
       suggestions: currentSuggestions,
       scanId: target.scanId,
+      resume: target.resume,
+      jobContext: target.jobContext,
     }, { frameId: target.frameId });
     if (result?.error) throw new Error(result.error);
 
@@ -615,13 +869,20 @@ async function applyAll() {
       const text = String(label || "").replace(/\s+/g, " ").trim();
       return text.length > 45 ? `${text.slice(0, 42)}…` : text;
     };
+    const attachNote = {
+      attached: "Your resume file was attached. ",
+      unavailable: "",
+      none: "",
+      blocked: "Attach your resume manually. ",
+    }[result?.attach] ?? "Attach your resume manually. ";
     showStatus(
       `✓ Filled ${filled} fields. ` +
       (failures.length
         ? `Please complete ${failures.length} yourself: ${failures.slice(0, 4).map(item => short(item.label)).join(", ")}` +
           `${failures.length > 4 ? ` and ${failures.length - 4} more` : ""}. `
         : "") +
-      "Review the application and attach your resume manually before submitting.",
+      attachNote +
+      "Review the application before submitting.",
       failures.length ? "note" : "success"
     );
   } catch (err) {
@@ -651,6 +912,12 @@ function clearFormUI() {
   els.profile.value = "";
   els.fileName.textContent = "";
   uploadedResumeText = "";
+  resumes = [];
+  defaultResumeId = null;
+  selectedResumeId = null;
+  lastPick = null;
+  renderResumeList();
+  els.matchCard.classList.add("hidden");
   STRUCTURED_IDS.forEach((key) => {
     const el = sfEl(key);
     if (el) el.value = "";
@@ -721,11 +988,7 @@ async function initAuth() {
   authEls.signOutBtn.addEventListener("click", async () => {
     await signOut();
     // Clear locally cached profile so the floating button can't use it either.
-    await chrome.storage.local.remove([
-      "profile",
-      "structured",
-      "uploadedResumeText",
-    ]);
+    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "parseCache", "answerMemory", "answerCorrections", "answerLibrary", "resumes", "resumeFiles", "resumeChoices", "defaultResumeId"]);
     renderAuth(null);
     clearFormUI();
     gateContent(false);
@@ -735,14 +998,14 @@ async function initAuth() {
 // Permanently delete the signed-in user's cloud + local profile data.
 async function deleteMyData() {
   const sure = confirm(
-    "Delete all your JobPilot data (profile, resume text, demographics)?\n\nThis cannot be undone."
+    "Delete all your JobPilot data (profile, resumes, saved answers, demographics)?\n\nThis cannot be undone."
   );
   if (!sure) return;
 
   els.deleteData.disabled = true;
   try {
     await cloudDelete();
-    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled", "parseCache", "answerMemory"]);
+    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled", "parseCache", "answerMemory", "answerCorrections", "answerLibrary", "resumes", "resumeFiles", "resumeChoices", "defaultResumeId"]);
     clearFormUI();
     showStatus("Your saved profile and resume have been deleted ✓", "success");
     setTimeout(hideStatus, 2500);
@@ -862,7 +1125,10 @@ async function refreshFillAvailability() {
         .sendMessage(thisTabId, { type: "CHECK_JOB_PAGE" })
         .catch(() => null);
       if (resp?.isJobPage) {
-        if (stillCurrent()) setFillAvailable(true, "");
+        if (stillCurrent()) {
+          setFillAvailable(true, "");
+          refreshMatch();
+        }
         return;
       }
     }
@@ -902,7 +1168,12 @@ if (versionLabel && manifestVersion) versionLabel.textContent = `· v${manifestV
 els.save.addEventListener("click", () => save().catch(err => console.error("[JobPilot] Save failed:", err.message)));
 els.fill.addEventListener("click", fillForm);
 els.applyAll.addEventListener("click", applyAll);
-els.resumeFile.addEventListener("change", handleResumeUpload);
+els.resumeFile.addEventListener("change", (e) => handleResumeUpload(e));
+els.replaceFile.addEventListener("change", (e) => {
+  const id = replaceTargetId;
+  replaceTargetId = null;
+  if (id) handleResumeUpload(e, id);
+});
 els.deleteData.addEventListener("click", deleteMyData);
 initFabToggle();
 initAutoFillToggle();

@@ -127,3 +127,43 @@ export const PARSE_GEN_CONFIG = {
   maxOutputTokens: 3072,
   responseMimeType: "application/json",
 };
+
+const DRAFT_INSTRUCTIONS = {
+  shorter: "Rewrite the current answer to be about half as long. Keep the strongest specific points.",
+  longer: "Expand the current answer with more concrete detail from the resume (projects, results, technologies). At most about 250 words.",
+  regenerate: "Write a fresh answer with a different angle than the current one.",
+};
+
+export const DRAFT_MODES = Object.keys(DRAFT_INSTRUCTIONS);
+
+export function buildDraftPrompt({ question, answer, mode, jobContext = {}, profile }) {
+  const job = [jobContext.title, jobContext.company].filter(Boolean).join(" at ");
+  return `You help a candidate answer a job application question in their own voice, using only facts from their resume.
+Job: ${job || "(unknown)"}
+Job description (excerpt):
+"""
+${String(jobContext.description || "").slice(0, 3000)}
+"""
+Candidate resume and notes:
+"""
+${String(profile || "").slice(0, 12000)}
+"""
+Question: ${String(question).slice(0, 500)}
+Current answer:
+"""
+${String(answer || "").slice(0, 4000)}
+"""
+Task: ${DRAFT_INSTRUCTIONS[mode]}
+Rules:
+- First person, plain and specific; no clichés or filler.
+- Never invent employers, titles, numbers, or skills that are not in the resume.
+- Tie the answer to this job where the resume supports it.
+
+Respond with ONLY this JSON: {"answer":"<text>"}`;
+}
+
+export const DRAFT_GEN_CONFIG = {
+  temperature: 0.5,
+  maxOutputTokens: 1024,
+  responseMimeType: "application/json",
+};

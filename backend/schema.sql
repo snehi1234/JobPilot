@@ -6,10 +6,14 @@ create table if not exists public.profiles (
   email         text,
   structured    jsonb not null default '{}'::jsonb,  -- Quick Details fields
   profile_text  text  not null default '',  -- extra typed notes
-  resume_text   text  not null default '',  -- extracted resume text
+  resume_text   text  not null default '',  -- extracted text of the default resume
+  resumes       jsonb not null default '[]'::jsonb,  -- all resumes: [{id,name,text,fileName,fileType,updatedAt,isDefault}]
   updated_at    timestamptz not null default now(),
   created_at    timestamptz not null default now()
 );
+
+-- Migration for databases created before multiple resumes were supported.
+alter table public.profiles add column if not exists resumes jsonb not null default '[]'::jsonb;
 
 -- The backend uses the service-role key and enforces per-user access in code
 -- (by the verified Google token), so Row Level Security is not strictly

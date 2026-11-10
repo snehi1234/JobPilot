@@ -28,7 +28,8 @@ function harness(backendUrl, responses) {
     },
     chrome: {
       storage: { local: {
-        async get(key) { return { [key]: store[key] }; },
+        async get(keys) { return Object.fromEntries([].concat(keys).map((key) => [key, store[key]])); },
+        async remove(keys) { for (const key of [].concat(keys)) delete store[key]; },
         async set(values) { Object.assign(store, values); },
       } },
       sidePanel: {
@@ -44,6 +45,8 @@ function harness(backendUrl, responses) {
   });
   const engine = readFileSync(path.join(__dirname, "..", "lib", "answer-engine.mjs"), "utf8").replace(/^export /gm, "");
   vm.runInContext(engine, context);
+  const matcher = readFileSync(path.join(__dirname, "..", "lib", "match-score.mjs"), "utf8").replace(/^export /gm, "");
+  vm.runInContext(matcher, context);
   const source = readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
   vm.runInContext(source.replace(/^import .*;\r?$/gm, ""), context);
   return {
@@ -139,4 +142,72 @@ test("answers come from profile and memory first; only unknown fields reach the 
 
   const changed = await h.request({ ...message, structured: { email: "new@example.com" }, localOnly: true });
   assert.equal(JSON.stringify(changed.pending), JSON.stringify(["2"]), "editing the profile clears remembered answers");
+});
+
+test("resume pick uses stored resumes, remembers a manual choice per company, and migrates old profiles", async () => {
+  const h = harness("https://jobpilot.example.invalid", []);
+  h.store.uploadedResumeText = "Legacy resume text with Python";
+  const legacy = await h.request({ type: "PICK_RESUME", jobContext: { title: "Engineer" }, host: "x.example" });
+  assert.equal(legacy.resumeId, "default");
+  assert.equal(legacy.reason, "only");
+  assert.equal(legacy.text, "Legacy resume text with Python");
+
+  h.store.resumes = [
+    { id: "sw", name: "Software", text: "Java Kubernetes Docker microservices PostgreSQL Redis REST APIs" },
+    { id: "de", name: "Data", text: "Spark Airflow dbt Snowflake SQL Kafka ETL" },
+  ];
+  h.store.defaultResumeId = "sw";
+  const job = { company: "Plaid", title: "Data Engineer", description: "Spark, Airflow, dbt, Snowflake, SQL, Kafka." };
+  const pick = await h.request({ type: "PICK_RESUME", jobContext: job, host: "jobs.ashbyhq.com" });
+  assert.equal(pick.resumeId, "de");
+  assert.equal(pick.name, "Data");
+  assert.equal(pick.count, 2);
+
+  await h.request({ type: "REMEMBER_RESUME_CHOICE", jobContext: job, host: "jobs.ashbyhq.com", resumeId: "sw" });
+  const again = await h.request({ type: "PICK_RESUME", jobContext: job, host: "jobs.ashbyhq.com" });
+  assert.equal(again.resumeId, "sw");
+  assert.equal(again.reason, "remembered");
+  const fresh = await h.request({ type: "PICK_RESUME", jobContext: job, host: "jobs.ashbyhq.com", ignoreRemembered: true });
+  assert.equal(fresh.resumeId, "de");
+  assert.equal(h.calls.length, 0, "resume picking never calls the backend");
+});
+
+test("corrections and remembered answers are kept separately per resume", async () => {
+  const h = harness("https://jobpilot.example.invalid", [
+    { status: 200, body: { suggestions: [{ id: "1", value: "Yes", confidence: "high" }] } },
+    { status: 200, body: { suggestions: [{ id: "1", value: "Yes", confidence: "high" }] } },
+  ]);
+  const field = { id: "1", label: "Are you open to relocation?", kind: "radio", options: ["Yes", "No"], occurrence: 0 };
+  const message = { type: "GENERATE_ANSWERS", fields: [field], profile: "P", structured: {}, jobContext: {} };
+
+  await h.request({ ...message, resumeId: "sw" });
+  const learned = await h.request({ type: "LEARN_ANSWER", field, value: "No", resumeId: "sw" });
+  assert.equal(learned.learned, true);
+  const sw = await h.request({ ...message, resumeId: "sw" });
+  assert.equal(JSON.stringify(sw.suggestions.map((s) => [s.value, s.source])), JSON.stringify([["No", "correction"]]));
+  assert.equal(h.calls.length, 1);
+
+  const de = await h.request({ ...message, resumeId: "de" });
+  assert.equal(h.calls.length, 2, "another resume does not reuse the first resume's answers");
+  assert.equal(de.suggestions[0].value, "Yes");
+});
+
+test("saved long answers fill matching questions; drafts and files route correctly", async () => {
+  const h = harness("https://jobpilot.example.invalid", [
+    { status: 200, body: { answer: "Shorter draft" } },
+  ]);
+  await h.request({ type: "SAVE_TO_LIBRARY", question: "Why do you want to work here?", answer: "Because of the mission." });
+  const result = await h.request({
+    type: "GENERATE_ANSWERS", profile: "P", structured: {}, jobContext: {}, localOnly: true,
+    fields: [{ id: "9", label: "Why do you want to work here at Acme?", kind: "text", tag: "textarea", occurrence: 0 }],
+  });
+  assert.equal(JSON.stringify(result.suggestions.map((s) => [s.value, s.source])), JSON.stringify([["Because of the mission.", "library"]]));
+
+  const draft = await h.request({ type: "REVISE_DRAFT", question: "Why?", answer: "Long", mode: "shorter", jobContext: {}, profile: "P" });
+  assert.equal(draft.answer, "Shorter draft");
+  assert.equal(h.calls[0].url, "https://jobpilot.example.invalid/api/draft");
+
+  h.store.resumeFiles = { sw: { name: "cv.pdf", type: "application/pdf", data: "QUJD" } };
+  assert.equal((await h.request({ type: "GET_RESUME_FILE", resumeId: "sw" })).name, "cv.pdf");
+  assert.equal(await h.request({ type: "GET_RESUME_FILE", resumeId: "missing" }), null);
 });

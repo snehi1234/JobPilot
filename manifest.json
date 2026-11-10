@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "JobPilot — AI Job Application Autofill",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "description": "AI-assisted job application autofill from your profile and resume, with review tools and optional automatic filling.",
   "permissions": [
     "storage",
     "activeTab",
     "scripting",
     "sidePanel",
-    "identity"
+    "identity",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -36,7 +37,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["content-ui.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": true
     }

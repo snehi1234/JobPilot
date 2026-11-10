@@ -611,6 +611,9 @@ function detectFields() {
   // Repeated questions (e.g. two "School" fields) are numbered so remembered
   // answers map to the same position on other forms.
   fields.forEach((f) => { f.occurrence = fieldRegistry[f.id]?.labelIndex ?? 0; });
+  jpFieldsById = new Map(fields.map((f) => [String(f.id), f]));
+  jpSeenInputs = new WeakSet(jpQueryAll("input, textarea, select"));
+  jpStepOffered = false;
   return fields;
 }
 
@@ -957,26 +960,39 @@ async function applyAnswers(suggestions) {
       }
       const value = decodeEntities(typeof s.value === "boolean" ? (s.value ? "Yes" : "No") : String(s.value));
       let ok = false;
+      let markEl = null;
       if (meta.kind === "radio") {
+        const group = jpQueryAll(`[${GROUP_ATTR}="${CSS.escape(id)}"]`);
+        jpSnapshot("radio", null, group);
         ok = fillRadio(id, value);
+        markEl = group.find((r) => r.checked) || group[0];
       } else if (meta.kind === "buttongroup") {
         ok = fillButtonGroup(id, value);
+        markEl = jpQueryOne(`[${GROUP_ATTR}="${CSS.escape(id)}"]`)?.parentElement;
       } else {
         const el = jpResolveField(id, meta);
         if (!el) throw new Error("The field was removed or changed.");
+        jpSnapshot(meta.kind === "checkbox" ? "checkbox" : "value", el);
+        markEl = el;
         if (meta.kind === "combobox") ok = await fillCombobox(el, value);
         else if (meta.kind === "checkbox") ok = fillCheckbox(el, value);
         else if (el.tagName === "SELECT") ok = fillNativeSelect(el, value);
         else {
           ok = fillText(el, value);
           await sleep(30);
-          ok = ok && jpResolveField(id, meta)?.value === value;
+          markEl = jpResolveField(id, meta) || el;
+          ok = ok && markEl.value === value;
         }
       }
       if (!ok) throw new Error("The page did not accept the answer or no matching option was found.");
       filled++;
+      const source = s.source || "ai";
+      jpFillRecords.set(id, { source, label, el: markEl, value, kind: meta.kind });
+      jpMark(markEl, source);
     } catch (err) {
       failed.push({ id, label, reason: err.message });
+      const el = meta && meta.kind !== "radio" && meta.kind !== "buttongroup" ? jpResolveField(id, meta) : null;
+      if (el) jpMark(el, "needs");
       console.warn(`[JobPilot] Could not fill "${label}": ${err.message}`);
     }
     // Brief pause between fields so a re-render triggered by this fill
@@ -1362,6 +1378,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     jpAutofillInProgress = true;
+    jpClearMarks();
+    jpUndoStack = [];
+    jpFillRecords.clear();
+    jpHideChecklist();
     // Safety net: if APPLY_ANSWERS is never called to release the lock (e.g.
     // the side panel hit an error and gave up after detection), don't leave
     // autofill permanently blocked on this page — auto-release after 60s.
@@ -1390,9 +1410,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ filled: 0, stale: true });
       return false;
     }
-    applyAnswers(message.suggestions || []).then((result) => {
+    applyAnswers(message.suggestions || []).then(async (result) => {
       console.log(`[JobPilot] Filled ${result.filled} fields. stale=${result.stale}`);
       jpAutofillInProgress = false; // release the lock taken in DETECT_FIELDS
+      if (!result.stale && message.resume) {
+        jpCurrentResume = message.resume;
+        jpLastJobContext = message.jobContext || scrapeJobContext();
+        await jpFinishAutofill(message.resume, result.failed || []);
+        result.attach = jpChecklistState?.attach;
+      }
       sendResponse(result);
     }).catch(err => {
       jpAutofillInProgress = false;
@@ -1408,6 +1434,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.set({ fabEnabled: true }).catch(() => {});
     injectFab();
     sendResponse({ ok: true });
+    return false;
+  }
+  if (message.type === "GET_JOB_CONTEXT") {
+    sendResponse(looksLikeJobApplication() ? scrapeJobContext() : null);
     return false;
   }
   if (message.type === "CHECK_JOB_PAGE") {
@@ -1509,21 +1539,28 @@ function jpPositionToastNearFab(toast) {
   toast.style.left = `${left}px`;
 }
 
+// After filling: attach the resume file, show the checklist, and remember the
+// session so the next step of a multi-page form continues automatically.
+async function jpFinishAutofill(pick, needs) {
+  for (const item of needs) {
+    const meta = fieldRegistry[String(item.id)];
+    const el = meta && meta.kind !== "radio" && meta.kind !== "buttongroup" ? jpResolveField(String(item.id), meta) : null;
+    if (el && !jpFillRecords.has(String(item.id))) jpMark(el, "needs");
+  }
+  const attach = await jpAttachResume(pick?.resumeId);
+  jpSaveSession(pick);
+  jpWatchForNextStep();
+  jpShowChecklist({ needs, attach });
+}
+
 // Short, friendly summary. Fields left for the user are a normal outcome
 // (e.g. questions only they can answer), not an error.
 function fillSummary(filled, failed) {
-  const short = (label) => {
-    const text = String(label || "").replace(/\s+/g, " ").trim();
-    return text.length > 45 ? `${text.slice(0, 42)}…` : text;
-  };
-  const names = failed.slice(0, 4).map((f) => short(f.label)).join(", ");
-  const more = failed.length > 4 ? ` and ${failed.length - 4} more` : "";
   return `✓ Filled ${filled} fields.` +
-    (failed.length ? ` Please complete ${failed.length} yourself: ${names}${more}.` : "") +
-    " Review the application and attach your resume.";
+    (failed.length ? ` ${failed.length} need you — see the checklist.` : " Review the checklist, then submit.");
 }
 
-function jpToast(message, type = "info") {
+function jpToast(message, type = "info", action = null) {
   let toast = document.getElementById("jobpilot-toast");
   if (!toast) {
     toast = document.createElement("div");
@@ -1546,9 +1583,20 @@ function jpToast(message, type = "info") {
   const colors = { info: "#4a3aff", success: "#166534", error: "#991b1b", note: "#334155" };
   toast.style.background = colors[type] || colors.info;
   toast.textContent = message;
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label;
+    Object.assign(button.style, {
+      display: "block", marginTop: "8px", padding: "6px 10px", border: "none", borderRadius: "6px",
+      background: "#fff", color: "#1a1a2e", fontWeight: "600", cursor: "pointer",
+    });
+    button.onclick = () => { toast.style.display = "none"; action.run(); };
+    toast.appendChild(button);
+  }
   toast.style.display = "block";
   clearTimeout(toast._hideTimer);
-  const duration = type === "note" || message.length > 120 ? 10000 : 4000;
+  const duration = action ? 30000 : type === "note" || message.length > 120 ? 10000 : 4000;
   toast._hideTimer = setTimeout(() => (toast.style.display = "none"), duration);
 }
 
@@ -1597,12 +1645,13 @@ async function runAutofillFromButton(isAuto = false) {
       ]);
 
     const signedIn = Boolean(auth?.idToken);
-    const combinedProfile = [profile, uploadedResumeText].filter(Boolean).join("\n\n").trim();
+    const { resumes = [] } = await chrome.storage.local.get("resumes");
+    const hasResume = Boolean(uploadedResumeText) || resumes.length > 0;
     const hasStructured = structured && Object.values(structured).some((v) => v);
 
     // Not signed in, or no profile set up yet → open the panel to guide them,
     // instead of showing a confusing error.
-    if (!signedIn || (!combinedProfile && !hasStructured)) {
+    if (!signedIn || (!profile && !hasResume && !hasStructured)) {
       await openPanelOrToast(
         signedIn
           ? "Opening JobPilot — add your profile to autofill."
@@ -1611,7 +1660,19 @@ async function runAutofillFromButton(isAuto = false) {
       return;
     }
 
-    jpToast("📄 Reading your resume details…", "info");
+    // Fresh run: forget the previous step's highlights and undo history.
+    jpClearMarks();
+    jpUndoStack = [];
+    jpFillRecords.clear();
+    jpHideChecklist();
+
+    const earlyContext = scrapeJobContext();
+    const pick = await jpChooseResume(earlyContext, isAuto);
+    jpCurrentResume = pick;
+    const resumeText = pick?.text || uploadedResumeText || "";
+    const combinedProfile = [profile, resumeText].filter(Boolean).join("\n\n").trim();
+
+    jpToast(pick?.name && pick.count > 1 ? `📄 Using your "${pick.name}" resume…` : "📄 Reading your resume details…", "info");
     let counts = { experience: 1, education: 1 };
     let parsedEntries = null;
     if (combinedProfile) {
@@ -1658,6 +1719,7 @@ async function runAutofillFromButton(isAuto = false) {
     if (!(await checkAutofillConsent(isAuto))) return;
     const request = {
       type: "GENERATE_ANSWERS",
+      resumeId: pick?.resumeId,
       fields,
       profile: combinedProfile,
       jobContext,
@@ -1695,7 +1757,9 @@ async function runAutofillFromButton(isAuto = false) {
           jpToast(`Couldn't autofill: ${aiResponse.error}`, "error");
           return;
         }
-        jpToast(`Filled ${total.filled} fields from your profile. The AI couldn't answer the rest: ${aiResponse.error}`, "note");
+        jpToast(`Filled ${total.filled} fields. The AI couldn't answer the rest: ${aiResponse.error}`, "note");
+        const needs = pending.filter((f) => f.kind !== "checkbox").map((f) => ({ id: f.id, label: f.label }));
+        await jpFinishAutofill(pick, needs);
         return;
       }
       if (!(await checkAutofillConsent(isAuto))) return;
@@ -1716,6 +1780,7 @@ async function runAutofillFromButton(isAuto = false) {
       throw new Error("No fields were filled. " + total.failed.map(item => `${item.label}: ${item.reason}`).join("; "));
     }
     jpToast(fillSummary(total.filled, total.failed), total.failed.length ? "note" : "success");
+    await jpFinishAutofill(pick, total.failed);
   } catch (err) {
     console.error("[JobPilot] Autofill failed:", err);
     // Happens when the extension was reloaded/updated while this page was
@@ -1964,6 +2029,13 @@ function maybeShowFab() {
   try {
     if (looksLikeJobApplication()) {
       injectFab();
+      // Continuing a multi-page application after a full page load.
+      if (jpLoadSession()) {
+        const btn = document.getElementById("jobpilot-fab-btn");
+        if (btn && !jpAutofillInProgress) btn.textContent = "✨ Continue autofill";
+        jpWatchForNextStep();
+        setTimeout(jpCheckNextStep, 1500);
+      }
       maybeAutoFill();
     }
   } catch {

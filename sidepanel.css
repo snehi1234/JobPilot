@@ -195,6 +195,20 @@ textarea:focus {
   border-left: 3px solid #64748b;
 }
 
+.resume-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.resume-row { display: flex; align-items: center; gap: 6px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 8px; }
+.resume-row input[type="text"] { flex: 1; padding: 4px 6px; font-size: 13px; }
+.resume-row .meta { font-size: 11px; color: #6b7280; white-space: nowrap; }
+.resume-row button { border: none; background: none; cursor: pointer; font-size: 12px; color: #4a3aff; padding: 2px 4px; }
+.resume-row button.del { color: #b91c1c; }
+.resume-row label { font-size: 11px; color: #374151; display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+.match-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13px; }
+.match-bar { flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+.match-bar span { display: block; height: 100%; background: #4a3aff; }
+.match-row.best { font-weight: 600; }
+.legend { display: flex; gap: 10px; font-size: 11px; color: #6b7280; margin-top: 6px; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; }
+
 .hidden {
   display: none;
 }

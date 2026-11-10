@@ -29,7 +29,8 @@ make mistakes.
 
 **How it works:**
 1. Sign in with Google and set up your profile once (contact details, work
-   authorization, optional demographics) and upload your resume (PDF or Word).
+   authorization, optional demographics) and upload up to five resumes (PDF or
+   Word), e.g. one for software roles and one for data roles.
 2. Open a job application. JobPilot detects common application pages, including
    Greenhouse, Lever, Ashby, Workday, and others. Compatibility varies by site;
    some custom fields and multi-step forms may need manual entry.
@@ -39,12 +40,19 @@ make mistakes.
 4. Optionally enable automatic filling in the side panel after reading its
    disclosure. It is OFF by default. When enabled, recognized job pages can
    be processed and filled on load without another click or prior review.
-5. Review the filled application, attach your resume file manually, and submit
-   it yourself.
+5. JobPilot picks the resume that best matches the job, attaches it, and
+   shows a checklist: green fields came from your profile, blue fields are AI
+   answers to review, amber fields need you. Undo everything with one click.
+6. On multi-step applications, JobPilot offers to fill each new step.
+7. Review the filled application and submit it yourself.
 
 **Why JobPilot:**
 • Uses profile and job context to suggest answers
 • Handles common text fields, dropdowns, and repeated work/education sections
+• Match score for each of your resumes against the job description
+• Colour-coded fills, a review checklist, and one-click undo
+• Learns from your corrections and reuses answers you save
+• Drafts long answers you can shorten or expand
 • Offers editable suggestions in the side panel
 • Lets you disable automatic filling and delete your saved profile
 • Free to use, with a fair monthly usage limit
@@ -97,6 +105,11 @@ installed or reloaded.
 Used to store the user's profile data, resume text, authentication state, and
 extension preferences (e.g. whether the floating button is enabled) locally
 in the browser.
+
+**unlimitedStorage**
+Users can keep up to five resumes. The original PDF/Word files are kept only
+in the browser so JobPilot can attach the matching file to applications;
+together they can exceed the default local storage quota.
 
 **sidePanel**
 Used to show JobPilot's main UI (profile setup, resume upload, sign-in,

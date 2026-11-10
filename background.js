@@ -3,7 +3,8 @@
 
 import { BACKEND_URL } from "./config.js";
 import { getIdToken, signIn } from "./auth.js";
-import { resolveLocally, rememberAnswers, profileVersion } from "./lib/answer-engine.mjs";
+import { resolveLocally, rememberAnswers, profileVersion, recordCorrection, isLongQuestion } from "./lib/answer-engine.mjs";
+import { pickResume, companyKey } from "./lib/match-score.mjs";
 
 // Make clicking the toolbar icon open the side panel automatically.
 chrome.sidePanel
@@ -142,33 +143,126 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((err) => sendResponse({ error: err.message }));
     return true; // keep the channel open for async response
   }
+
+  const handlers = {
+    PICK_RESUME: chooseResume,
+    REMEMBER_RESUME_CHOICE: rememberResumeChoice,
+    LEARN_ANSWER: learnAnswer,
+    SAVE_TO_LIBRARY: saveToLibrary,
+    REVISE_DRAFT: reviseDraft,
+    GET_RESUME_FILE: getResumeFile,
+  };
+  const handler = handlers[message.type];
+  if (handler) {
+    handler(message)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
 });
 
-// Resolve answers locally (profile rules + remembered answers) and only send
-// the remaining fields to the AI. With `localOnly`, return immediately with
-// the ids still pending so the page can fill known fields first.
+const resumeKey = (id) => id || "default";
+
+async function loadResumes() {
+  const { resumes, defaultResumeId, uploadedResumeText } =
+    await chrome.storage.local.get(["resumes", "defaultResumeId", "uploadedResumeText"]);
+  if (Array.isArray(resumes) && resumes.length) return { resumes, defaultResumeId };
+  // Profiles created before multiple resumes were supported.
+  return uploadedResumeText
+    ? { resumes: [{ id: "default", name: "Resume", text: uploadedResumeText }], defaultResumeId: "default" }
+    : { resumes: [], defaultResumeId: null };
+}
+
+// Pick the resume for this application (best match, remembered choice for
+// this company, or the default) and report the scores.
+async function chooseResume(message) {
+  const { resumes, defaultResumeId } = await loadResumes();
+  const { resumeChoices = {} } = await chrome.storage.local.get("resumeChoices");
+  const key = companyKey(message.jobContext, message.host);
+  const pick = pickResume(resumes, message.jobContext, {
+    defaultId: defaultResumeId,
+    rememberedId: message.ignoreRemembered ? undefined : resumeChoices[key],
+  });
+  const chosen = resumes.find((r) => r.id === pick.resumeId);
+  return { ...pick, name: chosen?.name || "", text: chosen?.text || "", count: resumes.length };
+}
+
+async function rememberResumeChoice({ jobContext, host, resumeId }) {
+  const { resumeChoices = {} } = await chrome.storage.local.get("resumeChoices");
+  const key = companyKey(jobContext, host);
+  if (!key || !resumeId) return { ok: false };
+  const next = { ...resumeChoices, [key]: resumeId };
+  const keys = Object.keys(next);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 200))) delete next[k];
+  await chrome.storage.local.set({ resumeChoices: next });
+  return { ok: true };
+}
+
+// A value the user typed over an autofilled answer; reused next time.
+async function learnAnswer({ field, value, resumeId }) {
+  const { answerCorrections = {} } = await chrome.storage.local.get("answerCorrections");
+  const key = resumeKey(resumeId);
+  const updated = recordCorrection(answerCorrections[key], field, value);
+  await chrome.storage.local.set({ answerCorrections: { ...answerCorrections, [key]: updated } });
+  return { ok: true, learned: updated !== answerCorrections[key] };
+}
+
+async function saveToLibrary({ question, answer }) {
+  const q = String(question || "").trim().slice(0, 300);
+  const a = String(answer || "").trim().slice(0, 4000);
+  if (!q || !a) return { ok: false };
+  const { answerLibrary = [] } = await chrome.storage.local.get("answerLibrary");
+  const rest = answerLibrary.filter((item) => item.question !== q);
+  await chrome.storage.local.set({ answerLibrary: [{ question: q, answer: a, savedAt: Date.now() }, ...rest].slice(0, 100) });
+  return { ok: true };
+}
+
+async function reviseDraft({ question, answer, mode, jobContext, profile }) {
+  return callBackendWithAuth("/api/draft", { question, answer, mode, jobContext, profile });
+}
+
+async function getResumeFile({ resumeId }) {
+  const { resumeFiles = {} } = await chrome.storage.local.get("resumeFiles");
+  return resumeFiles[resumeKey(resumeId)] || null;
+}
+
+// Resolve answers locally (corrections, profile rules, remembered answers,
+// saved long answers) and only send the remaining fields to the AI. With
+// `localOnly`, return immediately with the ids still pending so the page can
+// fill known fields first. Memory and corrections are kept per resume.
 async function answerFields(message) {
   const fields = Array.isArray(message.fields) ? message.fields : [];
+  const key = resumeKey(message.resumeId);
   const version = await profileVersion(message.structured, message.profile);
-  let { answerMemory } = await chrome.storage.local.get("answerMemory");
-  if (answerMemory?.version !== version) answerMemory = { version, entries: {} };
+  const stored = await chrome.storage.local.get(["answerMemory", "answerCorrections", "answerLibrary"]);
+  const memories = stored.answerMemory && !stored.answerMemory.entries ? stored.answerMemory : {};
+  let memory = memories[key];
+  if (memory?.version !== version) memory = { version, entries: {} };
 
   const context = { sourceHint: message.jobContext?.sourceHint, today: new Date() };
   const { suggestions, pending } = message.skipLocal
     ? { suggestions: [], pending: fields }
-    : resolveLocally(fields, { structured: message.structured, memory: answerMemory, context });
+    : resolveLocally(fields, {
+        structured: message.structured,
+        memory,
+        context,
+        corrections: stored.answerCorrections?.[key],
+        library: stored.answerLibrary,
+      });
   if (message.localOnly) {
     return { suggestions, pending: pending.map((f) => f.id) };
   }
   if (!pending.length) return { suggestions, aiFields: 0 };
 
+  const byId = new Map(pending.map((f) => [String(f.id), f]));
   const ai = (await backendGenerate({
     fields: pending,
     profile: message.profile,
     jobContext: message.jobContext,
     structured: message.structured,
     parsedEntries: message.parsedEntries,
-  })).map((s) => ({ ...s, source: "ai" }));
-  await chrome.storage.local.set({ answerMemory: { ...rememberAnswers(answerMemory, pending, ai), version } });
+  })).map((s) => ({ ...s, source: isLongQuestion(byId.get(String(s.id)) || {}) ? "draft" : "ai" }));
+  const updated = rememberAnswers(memory, pending, ai);
+  await chrome.storage.local.set({ answerMemory: { ...memories, [key]: { ...updated, version } } });
   return { suggestions: [...suggestions, ...ai], aiFields: pending.length };
 }

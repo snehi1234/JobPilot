@@ -187,18 +187,25 @@
 
     <!-- Profile / resume -->
     <section class="card">
-      <h2>2. Your Profile</h2>
+      <h2>2. Your Resumes</h2>
       <p class="hint">
-        Upload your resume (PDF or Word) — its text is stored and used for autofill
-        (not shown here). Optionally add extra notes below (preferences, salary,
-        anything not on your resume).
+        Add up to 5 resumes (PDF or Word), e.g. "Software" and "Data Engineering".
+        JobPilot picks the best match for each job and attaches that file for you.
       </p>
 
+      <div id="resumeList" class="resume-list"></div>
+
       <div class="upload-row">
-        <label for="resumeFile" class="btn-upload">📄 Upload Resume (PDF or Word)</label>
+        <label for="resumeFile" class="btn-upload">📄 Add resume (PDF or Word)</label>
         <input
           type="file"
           id="resumeFile"
+          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
+          hidden
+        />
+        <input
+          type="file"
+          id="replaceFile"
           accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
           hidden
         />
@@ -207,9 +214,16 @@
 
       <textarea
         id="profile"
-        rows="6"
+        rows="4"
         placeholder="Optional: extra notes not on your resume (preferences, salary, etc.)"
       ></textarea>
+    </section>
+
+    <!-- Match for the job open in the current tab -->
+    <section id="matchCard" class="card hidden">
+      <h2>Match for this job</h2>
+      <div id="matchScores"></div>
+      <p id="matchSkills" class="hint" style="margin: 6px 0 0;"></p>
     </section>
 
     <div class="button-row">

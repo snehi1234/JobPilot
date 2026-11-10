@@ -1,6 +1,6 @@
 // api/profile.js — per-user profile storage.
 //   GET    /api/profile          → returns the signed-in user's profile
-//   PUT    /api/profile          → creates/updates it   (body: { structured, profileText, resumeText })
+//   PUT    /api/profile          → creates/updates it   (body: { structured, profileText, resumeText, resumes })
 //   DELETE /api/profile          → deletes it ("delete my data")
 //
 // Requires a valid signed-in user (Google ID token in Authorization header).
@@ -8,6 +8,7 @@
 import { applyCors, handlePreflight, readJsonBody } from "../lib/http.js";
 import { getUserFromRequest } from "../lib/auth.js";
 import { isDbConfigured, getProfile, upsertProfile, deleteProfile } from "../lib/db.js";
+import { sanitizeResumes } from "../lib/resumes.js";
 
 export default async function handler(req, res) {
   applyCors(req, res);
@@ -37,6 +38,7 @@ export default async function handler(req, res) {
               structured: row.structured || {},
               profileText: row.profile_text || "",
               resumeText: row.resume_text || "",
+              resumes: Array.isArray(row.resumes) ? row.resumes : [],
               updatedAt: row.updated_at,
             }
           : null,
@@ -50,6 +52,7 @@ export default async function handler(req, res) {
         structured: body.structured || {},
         profileText: body.profileText || "",
         resumeText: body.resumeText || "",
+        resumes: Array.isArray(body.resumes) ? sanitizeResumes(body.resumes) : undefined,
       });
       return res.status(200).json({ ok: true, updatedAt: saved.updated_at });
     }

@@ -174,3 +174,91 @@ test("side panel lists resumes and shows the match for the open job", async ({ a
   expect(pick.resumeId).toBe("de");
   expect(pick.scores[0].score).toBeGreaterThan(pick.scores[1].score);
 });
+
+// A single-page job site: the posting shows a short teaser, the full
+// description is only in the page's JSON-LD, and "Apply" renders the form
+// without a page load. The form has a site "autofill from resume" box, the
+// real "Résumé" field, and a cover-letter field.
+const SPA_URL = "https://careers.acme.test/jobs/456";
+const SPA_PAGE = `<!doctype html><html><head><title>Acme - Data Engineer</title>
+<script type="application/ld+json">${JSON.stringify({ "@type": "JobPosting", title: "Data Engineer",
+  description: "<p>Own ETL data pipelines with Spark, Airflow and dbt on Snowflake.</p><ul><li>Strong SQL and Python</li><li>Kafka streaming</li></ul>" })}</script>
+</head><body><main id="root"><h1>Data Engineer</h1><p>Join us.</p><button id="apply" type="button">Apply</button></main>
+<script>
+  document.getElementById("apply").onclick = () => {
+    history.pushState({}, "", "/jobs/456/apply");
+    document.getElementById("root").innerHTML =
+      '<h1>Application: Data Engineer</h1><form onsubmit="event.preventDefault()">' +
+      '<div class="parser"><p>Autofill from resume</p><p>Upload your resume here to autofill key application fields.</p><input type="file" id="parse"></div>' +
+      '<label for="fn">First name</label><input id="fn">' +
+      '<label for="em">Email</label><input id="em" type="email">' +
+      '<label for="why2">Why do you want to work at Acme?</label><textarea id="why2"></textarea>' +
+      '<div><div><span>Résumé*</span></div><div><div><p>Drop or select (.doc / .docx / .pdf)</p><input type="file" id="resume"></div></div></div>' +
+      '<div><div><span>Cover letter</span></div><div><div><p>Drop or select (.doc / .docx / .pdf)</p><input type="file" id="cover"></div></div></div>' +
+      '</form>';
+  };
+</script></body></html>`;
+
+async function openSpa(app) {
+  const job = await setup(app);
+  await job.close();
+  await app.context.route(SPA_URL, (route) => route.fulfill({ contentType: "text/html", body: SPA_PAGE }));
+  await app.context.route(`${SPA_URL}/apply`, (route) => route.fulfill({ contentType: "text/html", body: SPA_PAGE }));
+  const spa = await app.context.newPage();
+  await spa.goto(SPA_URL);
+  return spa;
+}
+
+test("single-page sites: the button appears when the form renders, the posting's description is scored, and only the résumé field gets the file", async ({ app }) => {
+  const spa = await openSpa(app);
+  await spa.waitForTimeout(2000);
+  expect(await spa.locator("#jobpilot-fab").count()).toBe(0);
+  await spa.locator("#apply").click();
+  await expect(spa.locator("#jobpilot-fab")).toBeVisible({ timeout: 8000 });
+  await autofill(spa);
+  await expect(spa.locator("#fn")).toHaveValue("Alex", { timeout: 10000 });
+  await expect.poll(() => spa.locator("#resume").evaluate((el) => el.files[0]?.name || ""), { timeout: 10000 }).toBe("data.pdf");
+  expect(await spa.locator("#parse").evaluate((el) => el.files.length)).toBe(0);
+  expect(await spa.locator("#cover").evaluate((el) => el.files.length)).toBe(0);
+  await expect(checklist(spa)).toBeAttached();
+  const text = await checklist(spa).evaluate((host) => host.shadowRoot.querySelector(".panel").innerText);
+  expect(text).toMatch(/Resume: Data · \d+% match/);
+  expect(text).toContain("Spark");
+  const generate = app.api.calls.filter((c) => c.endpoint === "/api/generate").pop();
+  expect(generate.body.jobContext.description).toContain("Airflow");
+});
+
+test("× hides the button on this page only; the panel switch hides it everywhere", async ({ app }) => {
+  const job = await setup(app);
+  await job.locator("#jobpilot-fab").evaluate((host) => host.shadowRoot.querySelectorAll("button")[1].click());
+  await expect(job.locator("#jobpilot-fab")).toHaveCount(0);
+  expect(await app.worker.evaluate(async () => (await chrome.storage.local.get("fabEnabled")).fabEnabled)).not.toBe(false);
+  const other = await app.context.newPage();
+  await other.goto(JOB_URL);
+  await expect(other.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+
+  await app.panel.reload();
+  await expect(app.panel.locator("#fabToggle")).toBeChecked();
+  await app.panel.locator("#fabToggle").uncheck();
+  await expect(other.locator("#jobpilot-fab")).toHaveCount(0);
+  await app.panel.locator("#fabToggle").check();
+  await expect(other.locator("#jobpilot-fab")).toBeVisible();
+});
+
+test("loading the scripts into an open page again (as after an update) replaces the old button", async ({ app }) => {
+  const job = await setup(app);
+  const errors = [];
+  job.on("pageerror", (e) => errors.push(e.message));
+  const before = await job.locator("#jobpilot-fab").getAttribute("data-jp-instance");
+  const result = await app.panel.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ["content-ui.js", "content.js"] });
+    return "ok";
+  }, JOB_URL);
+  expect(result).toBe("ok");
+  await expect.poll(() => job.locator("#jobpilot-fab").getAttribute("data-jp-instance")).not.toBe(before);
+  await expect(job.locator("#jobpilot-fab")).toHaveCount(1);
+  await autofill(job);
+  await expect(job.locator("#fn")).toHaveValue("Alex", { timeout: 10000 });
+  expect(errors).toEqual([]);
+});

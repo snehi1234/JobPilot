@@ -377,9 +377,20 @@ function renderResumeList() {
     del.addEventListener("click", () => deleteResume(resume.id));
 
     row.append(name, def, replace, del);
+    row.dataset.id = resume.id;
     els.resumeList.appendChild(row);
   }
   els.resumeFile.disabled = resumes.length >= MAX_RESUMES;
+  // Resumes carried over from older versions have text but no file to attach.
+  chrome.storage.local.get("resumeFiles").then(({ resumeFiles = {} }) => {
+    for (const row of els.resumeList.querySelectorAll(".resume-row")) {
+      if (resumeFiles[row.dataset.id] || row.querySelector(".nofile")) continue;
+      const warn = document.createElement("div");
+      warn.className = "nofile";
+      warn.textContent = "⚠ File not saved — click Replace and pick this resume once so JobPilot can attach it to applications.";
+      row.after(warn);
+    }
+  }).catch(() => {});
 }
 
 // ---------- Match for the open job ----------
@@ -401,14 +412,14 @@ async function refreshMatch() {
     return;
   }
   const host = (() => { try { return new URL(tab.url).hostname; } catch { return ""; } })();
-  const pick = await chrome.runtime.sendMessage({ type: "PICK_RESUME", jobContext, host }).catch(() => null);
+  const pick = await chrome.runtime.sendMessage({ type: "PICK_RESUME", jobContext, host, url: tab.url }).catch(() => null);
   if (!pick?.resumeId) {
     els.matchCard.classList.add("hidden");
     return;
   }
   if (lastJobContext?.title !== jobContext.title || lastPick?.resumeId !== pick.resumeId) selectedResumeId = null;
-  lastPick = { ...pick, host };
-  lastJobContext = jobContext;
+  lastPick = { ...pick, host, url: tab.url };
+  lastJobContext = pick.jobContext || jobContext;
   renderMatch();
 }
 
@@ -416,7 +427,7 @@ function renderMatch() {
   const pick = lastPick;
   const chosenId = selectedResumeId || pick.resumeId;
   els.matchScores.innerHTML = "";
-  const informative = pick.scores.some((s) => s.jobSkillCount >= 3);
+  const informative = pick.scores.some((s) => s.informative);
   for (const s of pick.scores) {
     const row = document.createElement("label");
     row.className = `match-row${s.id === chosenId ? " best" : ""}`;
@@ -426,7 +437,7 @@ function renderMatch() {
     radio.checked = s.id === chosenId;
     radio.addEventListener("change", () => {
       selectedResumeId = s.id;
-      chrome.runtime.sendMessage({ type: "REMEMBER_RESUME_CHOICE", jobContext: lastJobContext, host: pick.host, resumeId: s.id }).catch(() => {});
+      chrome.runtime.sendMessage({ type: "REMEMBER_RESUME_CHOICE", jobContext: lastJobContext, host: pick.host, url: pick.url, resumeId: s.id }).catch(() => {});
       renderMatch();
     });
     const name = document.createElement("span");
@@ -446,7 +457,7 @@ function renderMatch() {
   }
   const chosen = pick.scores.find((s) => s.id === chosenId) || pick.scores[0];
   if (!informative) {
-    els.matchSkills.textContent = "Not enough detail in the job description to score; using your default resume.";
+    els.matchSkills.textContent = "Couldn't find this job's description to score against; using your default resume.";
   } else {
     const matched = (chosen.matched || []).slice(0, 8).join(", ");
     const missing = (chosen.missing || []).slice(0, 6).join(", ");
@@ -702,7 +713,12 @@ async function fillForm() {
     if (detectResponse?.error) throw new Error(detectResponse.error);
 
     const fields = detectResponse?.fields || [];
-    const jobContext = detectResponse?.jobContext || {};
+    const scraped = detectResponse?.jobContext || {};
+    // The description fetched for the match card is usually more complete than
+    // the application page's own text.
+    const jobContext = lastJobContext?.description && lastJobContext.title === scraped.title
+      ? { ...scraped, description: lastJobContext.description }
+      : scraped;
     currentTarget = {
       tabId: tab.id,
       frameId: detectResponse.frameId ?? 0,
@@ -1022,6 +1038,10 @@ async function deleteMyData() {
 async function initFabToggle() {
   const { fabEnabled } = await chrome.storage.local.get(["fabEnabled"]);
   els.fabToggle.checked = fabEnabled !== false; // default: enabled
+  // Stay in sync when the button is hidden from a page.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && "fabEnabled" in changes) els.fabToggle.checked = changes.fabEnabled.newValue !== false;
+  });
 
   els.fabToggle.addEventListener("change", async () => {
     const enabled = els.fabToggle.checked;

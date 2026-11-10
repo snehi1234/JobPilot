@@ -47,6 +47,8 @@ function harness(backendUrl, responses) {
   vm.runInContext(engine, context);
   const matcher = readFileSync(path.join(__dirname, "..", "lib", "match-score.mjs"), "utf8").replace(/^export /gm, "");
   vm.runInContext(matcher, context);
+  const jd = readFileSync(path.join(__dirname, "..", "lib", "job-description.mjs"), "utf8").replace(/^export /gm, "");
+  vm.runInContext(jd, context);
   const source = readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
   vm.runInContext(source.replace(/^import .*;\r?$/gm, ""), context);
   return {

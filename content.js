@@ -7,13 +7,13 @@
 // radio-button groups, checkboxes, and custom react-select dropdowns
 // (used by Greenhouse, Lever, Ashby, etc.).
 
-const FIELD_ATTR = "data-jobpilot-id";
-const GROUP_ATTR = "data-jobpilot-group";
+var FIELD_ATTR = "data-jobpilot-id";
+var GROUP_ATTR = "data-jobpilot-group";
 
 // Registry mapping field id → metadata, so APPLY knows how to fill each one.
 // Lives for the page's lifetime (same context as detection).
-let fieldRegistry = {};
-let fieldScanId = null;
+var fieldRegistry = {};
+var fieldScanId = null;
 
 // Global lock preventing two autofill operations (auto-run on page load, a
 // manual floating-button click, or a side-panel "Fill This Form" request)
@@ -25,9 +25,9 @@ let fieldScanId = null;
 // when it finally resolves. Symptom seen in testing: answers meant for one
 // field (e.g. a Yes/No question) landing in a completely different field
 // (e.g. First Name) after two overlapping runs raced each other.
-let jpAutofillInProgress = false;
+var jpAutofillInProgress = false;
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Bail out early in frames that can't plausibly be a real application form —
 // this matters a lot now that the content script runs in every iframe
@@ -42,8 +42,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // up as a real "Uncaught Error" in chrome://extensions' Errors page — and
 // since this fires in EVERY small iframe on EVERY page, it would spam that
 // page with errors even though this is expected, intentional behavior.
-const JP_MIN_FRAME_SIZE = 200; // px — smaller than this can't hold a real form
-let jpSkipFrame = false;
+var JP_MIN_FRAME_SIZE = 200; // px — smaller than this can't hold a real form
+var jpSkipFrame = false;
 if (window !== window.top) {
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -67,7 +67,7 @@ console.log(
 // not recursively re-querying), recursing into open shadow roots, with a
 // visited-set and a hard element cap so a pathological page can never cause
 // runaway CPU/memory use.
-const JP_MAX_SCAN_ELEMENTS = 15000; // safety cap for very large/complex pages
+var JP_MAX_SCAN_ELEMENTS = 15000; // safety cap for very large/complex pages
 
 function jpQueryAll(selector, root = document) {
   const results = [];
@@ -167,6 +167,12 @@ function nearbyQuestion(el, members = [el]) {
       !isOwn(child) && !child.querySelector("input, select, textarea, button")
     );
     if (label?.textContent.trim()) return label.textContent.trim();
+    // Design systems that label fields with an element id ending in "-label"
+    // (e.g. Rippling: <span id="field-31-label">Phone number</span>).
+    const labelled = Array.from(node.children)
+      .map(child => child.matches("[id$='-label']") ? child : child.querySelector(":scope > [id$='-label']"))
+      .find(child => child && !isOwn(child) && !child.querySelector("input, select, textarea, button") && child.textContent.trim());
+    if (labelled) return labelled.textContent.trim();
     if (node.matches("form, body")) break;
   }
   return "";
@@ -218,6 +224,8 @@ function isVisible(el) {
 
 // ---------- Label resolution ----------
 
+var JP_GENERIC_LABEL = /^(search|search\.\.\.|select|select\.\.\.|select…|choose|choose one|textbox|text box|input|type here|type here\.\.\.|start typing\.\.\.|enter text|none)$/i;
+
 function getLabelForElement(el) {
   if (el.id) {
     const explicit = jpQueryOne(`label[for="${CSS.escape(el.id)}"]`, el.getRootNode());
@@ -226,14 +234,21 @@ function getLabelForElement(el) {
   const parentLabel = el.closest("label");
   if (parentLabel) return parentLabel.innerText.trim();
 
-  if (el.getAttribute("aria-label")) return el.getAttribute("aria-label").trim();
+  // Widgets often use a generic accessible name ("Search", "Select…"); the
+  // real question is then in the surrounding field.
+  const aria = el.getAttribute("aria-label")?.trim();
+  if (aria && !JP_GENERIC_LABEL.test(aria)) return aria;
   const referenced = referencedLabel(el);
-  if (referenced) return referenced;
+  if (referenced && !JP_GENERIC_LABEL.test(referenced)) return referenced;
   const nearby = nearbyQuestion(el);
   if (nearby) {
     const part = el.tagName === "SELECT" ? el.options[0]?.textContent?.match(/^(month|year)\b/i)?.[1] : "";
-    return part ? `${nearby} (${part.toLowerCase()})` : nearby;
+    if (part) return `${nearby} (${part.toLowerCase()})`;
+    // A dropdown inside a phone field picks the country calling code.
+    if (isComboboxInput(el) && /phone|mobile/i.test(nearby)) return `${nearby} country code`;
+    return nearby;
   }
+  if (aria) return aria;
   if (el.placeholder) return el.placeholder.trim();
 
   const prev = el.previousElementSibling;
@@ -659,12 +674,35 @@ function fillText(el, value) {
   return el.value === value;
 }
 
+function jpIsPhoneField(el, label) {
+  return el.type === "tel" || el.inputMode === "tel" ||
+    /phone|mobile|cell/i.test(`${label || ""} ${el.placeholder || ""} ${el.name || ""} ${el.id || ""}`);
+}
+
+var jpDigits = (text) => String(text || "").replace(/\D/g, "");
+
+// The page kept the number if its digits are the same national number.
+function jpPhoneAccepted(shown, wanted) {
+  const a = jpDigits(shown);
+  const b = jpDigits(wanted);
+  return a.length >= 7 && (b.endsWith(a) || a.endsWith(b.slice(-10)));
+}
+
+// "+1 (425) 310-5258" → "(425) 310-5258" (drops a leading +country code).
+function jpNationalNumber(value) {
+  const text = String(value || "").trim();
+  const stripped = text.replace(/^\+\d{1,3}[\s.-]*/, "");
+  return stripped === text && jpDigits(text).length === 11 && jpDigits(text)[0] === "1"
+    ? jpDigits(text).slice(1)
+    : stripped;
+}
+
 // Groups of interchangeable phrasings so short AI answers like "N/A" or
 // "None" match verbose dropdown option text like "Not applicable/Do not
 // recall" or "No active clearance" — exact/substring matching alone missed
 // most of these (only 6 of 27 suggestions applied in testing, almost all
 // failures were on <select> fields with mismatched wording).
-const SYNONYM_GROUPS = [
+var SYNONYM_GROUPS = [
   ["n/a", "na", "not applicable", "not applicable/do not recall", "none", "no", "not applicable / do not recall"],
   ["decline", "decline to answer", "decline to self-identify", "prefer not to say", "prefer not to answer", "i do not wish to answer"],
   ["yes", "y"],
@@ -981,7 +1019,17 @@ async function applyAnswers(suggestions) {
           ok = fillText(el, value);
           await sleep(30);
           markEl = jpResolveField(id, meta) || el;
-          ok = ok && markEl.value === value;
+          if (markEl.value !== value && jpIsPhoneField(markEl, label)) {
+            // Phone inputs often reformat the number, or take only the
+            // national number when the country code is a separate control.
+            if (!jpPhoneAccepted(markEl.value, value)) {
+              fillText(markEl, jpNationalNumber(value));
+              await sleep(30);
+            }
+            ok = jpPhoneAccepted(markEl.value, value);
+          } else {
+            ok = ok && markEl.value === value;
+          }
         }
       }
       if (!ok) throw new Error("The page did not accept the answer or no matching option was found.");
@@ -1431,6 +1479,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Re-enable the floating Autofill button (globally, across all tabs) and
     // show it on this tab right away, without needing a page reload.
     jpFabEnabled = true;
+    jpFabHiddenHere = false;
     chrome.storage.local.set({ fabEnabled: true }).catch(() => {});
     injectFab();
     sendResponse({ ok: true });
@@ -1458,7 +1507,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ================= Floating "Autofill" button (auto-detect) =================
 
-const JP_BTN_ID = "jobpilot-fab";
+var JP_BTN_ID = "jobpilot-fab";
 
 // Heuristic: does this page look like a job application form?
 function looksLikeJobApplication() {
@@ -1482,6 +1531,9 @@ function looksLikeJobApplication() {
     "eightfold.ai",
     "paylocity.com",
     "breezy.hr",
+    "ats.rippling.com",
+    "recruitee.com",
+    "teamtailor.com",
   ];
   if (KNOWN_ATS.some((d) => host.endsWith(d) || host.includes(d))) return true;
 
@@ -1621,7 +1673,7 @@ async function runAutofillFromButton(isAuto = false) {
   }
   jpAutofillInProgress = true;
 
-  const btn = document.getElementById("jobpilot-fab-btn");
+  const btn = jpFabButton();
   if (btn) {
     btn.disabled = true;
     btn.textContent = "⏳ Filling…";
@@ -1690,12 +1742,21 @@ async function runAutofillFromButton(isAuto = false) {
     jpToast("🔍 Scanning the form fields…", "info");
     const expanded = await expandRepeatableSections(counts, parsedEntries);
     console.log(`[JobPilot] expandRepeatableSections added ${expanded} new row(s) for targets:`, counts);
-    const fields = detectFields();
+    let fields = detectFields();
+    // The form may still be rendering (the button appears as soon as a job
+    // site is recognized), so wait briefly for fields before giving up.
+    for (let waited = 0; fields.length === 0 && waited < 6000; waited += 500) {
+      await sleep(500);
+      fields = detectFields();
+    }
     console.log(
       `[JobPilot] Detected ${fields.length} fillable field(s):`,
       fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))
     );
     const jobContext = scrapeJobContext();
+    // The posting page's description (fetched when this page shows only the
+    // form) gives the AI the real job requirements.
+    if (pick?.jobContext?.description) jobContext.description = pick.jobContext.description;
     if (fields.length === 0) {
       jpToast("No fillable fields found on this page.", "error");
       return;
@@ -1802,9 +1863,27 @@ async function runAutofillFromButton(isAuto = false) {
   }
 }
 
+// The extension can no longer be reached from this page (it was updated or
+// reloaded). A fresh copy of this script takes over the page.
+function jpOrphaned() {
+  try { return !chrome.runtime?.id; } catch { return true; }
+}
+
+// Identifies the button injected by this copy of the script.
+var JP_INSTANCE = Math.random().toString(36).slice(2);
+
+function jpFabButton() {
+  return document.getElementById(JP_BTN_ID)?.shadowRoot?.getElementById("jobpilot-fab-btn") || null;
+}
+
 function injectFab() {
-  if (document.getElementById(JP_BTN_ID)) return;
-  if (!jpFabEnabled) return; // globally disabled — re-enable from the side panel
+  if (jpOrphaned()) return;
+  const existing = document.getElementById(JP_BTN_ID);
+  if (existing) {
+    if (existing.dataset.jpInstance === JP_INSTANCE) return;
+    existing.remove(); // left behind by a previous version, no longer works
+  }
+  if (!jpFabEnabled || jpFabHiddenHere) return;
 
   // Host element attached directly to <html> (not <body>) and rendered inside
   // a Shadow DOM. This avoids two common real-world breakages on modern SPA
@@ -1821,6 +1900,7 @@ function injectFab() {
   // (inside the shadow root) just holds the button + close button.
   const host = document.createElement("div");
   host.id = JP_BTN_ID;
+  host.dataset.jpInstance = JP_INSTANCE;
   Object.assign(host.style, {
     all: "initial",
     display: "block",
@@ -1868,7 +1948,7 @@ function injectFab() {
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.textContent = "×";
-  closeBtn.title = "Hide everywhere (re-enable anytime from the JobPilot panel)";
+  closeBtn.title = "Hide on this page (turn it off everywhere from the JobPilot panel)";
   Object.assign(closeBtn.style, {
     position: "absolute",
     top: "-8px",
@@ -1887,8 +1967,7 @@ function injectFab() {
   });
   closeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    jpFabEnabled = false;
-    chrome.storage.local.set({ fabEnabled: false }).catch(() => {});
+    jpFabHiddenHere = true;
     removeFab();
   });
 
@@ -1978,7 +2057,8 @@ function jpSaveFabPosition(pos) {
 // Whether the floating Autofill button is globally enabled, across every
 // site and tab (toggled from the side panel). Persisted in chrome.storage.local
 // so it applies everywhere, not just the current page. Defaults to enabled.
-let jpFabEnabled = true;
+var jpFabEnabled = true;
+var jpFabHiddenHere = false; // closed with × on this page only
 if (!jpSkipFrame) {
   chrome.storage.local.get(["fabEnabled"]).then(({ fabEnabled }) => {
     jpFabEnabled = fabEnabled !== false;
@@ -1990,6 +2070,7 @@ if (!jpSkipFrame) {
     if (area !== "local") return;
     if ("fabEnabled" in changes) {
       jpFabEnabled = changes.fabEnabled.newValue !== false;
+      jpFabHiddenHere = false;
       if (jpFabEnabled) maybeShowFab();
       else removeFab();
     }
@@ -1997,11 +2078,11 @@ if (!jpSkipFrame) {
   });
 }
 
-let jpFabDragging = false;
+var jpFabDragging = false;
 
 // Automatic processing requires a separate, per-device opt-in; showing the
 // floating button or having a saved profile does not grant consent.
-let jpAutoRunAttempted = false;
+var jpAutoRunAttempted = false;
 
 async function maybeAutoFill() {
   if (jpAutoRunAttempted || !jpFabEnabled) return;
@@ -2023,15 +2104,21 @@ async function maybeAutoFill() {
   }
 }
 
+var jpPrefetchedUrl = null;
+
 // Check periodically (handles SPA job forms that render after load).
 function maybeShowFab() {
   if (jpSkipFrame) return; // tiny non-form iframe — never show/poll here
   try {
     if (looksLikeJobApplication()) {
       injectFab();
+      if (jpPrefetchedUrl !== location.href) {
+        jpPrefetchedUrl = location.href;
+        chrome.runtime.sendMessage({ type: "PREFETCH_JOB", jobContext: scrapeJobContext(), url: location.href }).catch(() => {});
+      }
       // Continuing a multi-page application after a full page load.
       if (jpLoadSession()) {
-        const btn = document.getElementById("jobpilot-fab-btn");
+        const btn = jpFabButton();
         if (btn && !jpAutofillInProgress) btn.textContent = "✨ Continue autofill";
         jpWatchForNextStep();
         setTimeout(jpCheckNextStep, 1500);
@@ -2044,10 +2131,29 @@ function maybeShowFab() {
 }
 
 if (!jpSkipFrame) {
-  let jpChecks = 0;
-  const jpInterval = setInterval(() => {
-    maybeShowFab();
-    if (++jpChecks >= 10 || document.getElementById(JP_BTN_ID)) clearInterval(jpInterval);
-  }, 1500);
+  // Single-page job sites (e.g. Rippling, Workday) render the application
+  // form after the page loads or when "Apply" is clicked without a new page
+  // load, so keep watching the page (throttled) instead of checking only at
+  // load.
+  let jpFabCheckPending = false;
+  const jpScheduleFabCheck = () => {
+    if (jpFabCheckPending) return;
+    jpFabCheckPending = true;
+    setTimeout(() => {
+      jpFabCheckPending = false;
+      if (jpOrphaned()) {
+        jpFabObserver?.disconnect();
+        return;
+      }
+      const present = document.getElementById(JP_BTN_ID)?.dataset.jpInstance === JP_INSTANCE;
+      if (!present) maybeShowFab();
+    }, 1000);
+  };
+  const jpFabObserver = typeof MutationObserver === "function" ? new MutationObserver(jpScheduleFabCheck) : null;
+  if (jpFabObserver && document.documentElement) {
+    jpFabObserver.observe(document.documentElement, { childList: true, subtree: true });
+  }
+  window.addEventListener?.("popstate", jpScheduleFabCheck);
+  window.addEventListener?.("hashchange", jpScheduleFabCheck);
   maybeShowFab();
 }

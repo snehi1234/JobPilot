@@ -81,8 +81,30 @@ test("close scores are flagged so the user is asked", async () => {
   assert.equal(pick.reason, "close");
 });
 
-test("company keys group applications by company, else by host", async () => {
+test("company keys group applications by company, else by job board and company slug", async () => {
   const { companyKey } = await load();
   assert.equal(companyKey({ company: "Plaid, Inc." }, "jobs.ashbyhq.com"), "plaid inc");
+  assert.equal(companyKey({ company: "Software Engineer, Backend @ Wisdom AI" }, "jobs.ashbyhq.com"), "wisdom ai");
+  assert.equal(companyKey({ company: "Apply" }, "ats.rippling.com", "https://ats.rippling.com/rippling/jobs/1/apply"), "ats.rippling.com/rippling");
   assert.equal(companyKey({}, "Jobs.Lever.co"), "jobs.lever.co");
+});
+
+test("a page without a job description is not scored as a real match", async () => {
+  const { scoreResume, pickResume } = await load();
+  const form = { title: "Software Engineer, Backend", description: "Upload your resume here to autofill key application fields." };
+  assert.equal(scoreResume(SOFTWARE, form).informative, false);
+  const pick = pickResume([{ id: "sw", name: "S", text: SOFTWARE }, { id: "de", name: "D", text: DATA }], form, { defaultId: "de" });
+  assert.equal(pick.reason, "default");
+  assert.equal(pick.resumeId, "de");
+});
+
+test("specific skills count toward their category, and description words add signal", async () => {
+  const { extractSkills, scoreResume } = await load();
+  const skills = extractSkills("PostgreSQL and Azure");
+  assert.ok(skills.has("Databases") && skills.has("Cloud"));
+  const job = { title: "Backend Engineer", description: "Design databases and cloud services for payment ledgers. Payment ledgers reconcile merchant settlement. Merchant settlement and payment reconciliation at scale; ledgers and reconciliation tooling for merchant payouts and payouts reporting." };
+  const withDomain = scoreResume(SOFTWARE + " Built payment ledgers, merchant settlement, payouts and reconciliation.", job);
+  const without = scoreResume(SOFTWARE, job);
+  assert.ok(withDomain.score > without.score, `${withDomain.score} > ${without.score}`);
+  assert.equal(without.informative, true);
 });

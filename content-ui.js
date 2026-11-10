@@ -9,8 +9,8 @@
 //   • Attaches the selected resume file to resume/CV upload fields.
 //   • Keeps a short session so multi-step forms continue on the next step.
 
-const JP_MARK_ATTR = "data-jobpilot-source";
-const JP_MARK_STYLE = {
+var JP_MARK_ATTR = "data-jobpilot-source";
+var JP_MARK_STYLE = {
   profile: { color: "#16a34a", title: "Filled from your JobPilot profile" },
   memory: { color: "#16a34a", title: "Filled from an answer you've used before" },
   correction: { color: "#16a34a", title: "Filled with the answer you chose last time" },
@@ -19,16 +19,16 @@ const JP_MARK_STYLE = {
   library: { color: "#2563eb", title: "From your saved answers — please personalize" },
   needs: { color: "#d97706", title: "JobPilot couldn't fill this — please complete it" },
 };
-const JP_SESSION_KEY = "jobpilot_session";
-const JP_SESSION_MS = 30 * 60 * 1000;
+var JP_SESSION_KEY = "jobpilot_session";
+var JP_SESSION_MS = 30 * 60 * 1000;
 
-let jpUndoStack = [];
-let jpFillRecords = new Map(); // field id → { source, label, el, kind }
-let jpFieldsById = new Map(); // field id → detected field descriptor
-let jpCurrentResume = null; // { resumeId, name, scores, ... }
-let jpLastJobContext = null;
-let jpChecklistState = null;
-let jpSeenInputs = new WeakSet(); // fields present at the last scan
+var jpUndoStack = [];
+var jpFillRecords = new Map(); // field id → { source, label, el, kind }
+var jpFieldsById = new Map(); // field id → detected field descriptor
+var jpCurrentResume = null; // { resumeId, name, scores, ... }
+var jpLastJobContext = null;
+var jpChecklistState = null;
+var jpSeenInputs = new WeakSet(); // fields present at the last scan
 
 // ---------- Highlights ----------
 
@@ -139,7 +139,7 @@ function jpCurrentValue(id, el) {
   return el.value || "";
 }
 
-let jpLearnTimers = new Map();
+var jpLearnTimers = new Map();
 function jpOnUserEdit(event) {
   if (!event.isTrusted) return;
   const el = event.target;
@@ -166,14 +166,32 @@ for (const type of ["change", "focusout"]) document.addEventListener(type, jpOnU
 
 // ---------- Resume file attachment ----------
 
+var jpNormalize = (text) => String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+// What a file input is for, judged by its own attributes and then by the
+// nearest surrounding text: "resume", "parser" (a site's own "autofill from
+// resume" box, which would overwrite fields), or "other" (cover letter,
+// transcript, …). Accents are ignored so "Résumé" matches.
+function jpFileInputPurpose(input) {
+  const own = jpNormalize([input.name, input.id, input.getAttribute("aria-label"), input.getAttribute("data-testid")].join(" "));
+  if (/cover|transcript|portfolio/.test(own)) return "other";
+  if (/resume|\bcv\b|curriculum/.test(own)) return "resume";
+  let el = input;
+  for (let depth = 0; depth < 6 && el?.parentElement; depth++) {
+    el = el.parentElement;
+    const text = jpNormalize(el.textContent).slice(0, 400);
+    if (/autofill|auto-fill/.test(text)) return "parser";
+    const resumeAt = text.search(/resume|\bcv\b|curriculum vitae/);
+    const otherAt = text.search(/cover letter|transcript|portfolio|writing sample|other (documents?|files?)|additional (documents?|files?)/);
+    if (resumeAt < 0 && otherAt < 0) continue;
+    if (otherAt >= 0 && (resumeAt < 0 || otherAt < resumeAt)) return "other";
+    return "resume";
+  }
+  return "unknown";
+}
+
 function jpResumeFileInputs() {
-  return jpQueryAll("input[type='file']").filter((input) => {
-    const context = [
-      input.name, input.id, input.getAttribute("aria-label"), input.accept,
-      input.closest("label, fieldset, [class*='field'], [class*='upload'], [data-field-path]")?.textContent?.slice(0, 200),
-    ].join(" ").toLowerCase();
-    return /resume|cv\b|curriculum/.test(context) && !/cover/.test(context.replace(/resume.*$/, ""));
-  });
+  return jpQueryAll("input[type='file']").filter((input) => jpFileInputPurpose(input) === "resume");
 }
 
 function jpBase64ToFile({ name, type, data }) {
@@ -181,21 +199,47 @@ function jpBase64ToFile({ name, type, data }) {
   return new File([bytes], name, { type: type || "application/octet-stream" });
 }
 
+// Upload widgets usually show the full file name once they accept a file.
+function jpUploadShowsFile(input, name) {
+  const wanted = jpNormalize(name);
+  if (!wanted) return false;
+  let el = input;
+  for (let depth = 0; depth < 4 && el?.parentElement; depth++) {
+    el = el.parentElement;
+    if (jpNormalize(el.textContent).includes(wanted)) return true;
+  }
+  return false;
+}
+
 // Returns "attached" | "unavailable" (no stored file) | "none" (no field) | "blocked".
 async function jpAttachResume(resumeId) {
-  const inputs = jpResumeFileInputs().filter((input) => !input.files?.length);
-  if (!inputs.length) return jpResumeFileInputs().some((i) => i.files?.length) ? "attached" : "none";
-  const stored = await chrome.runtime.sendMessage({ type: "GET_RESUME_FILE", resumeId }).catch(() => null);
-  if (!stored?.data) return "unavailable";
+  const inputs = jpResumeFileInputs();
+  if (!inputs.length) return "none";
   const input = inputs[0];
+  const stored = await chrome.runtime.sendMessage({ type: "GET_RESUME_FILE", resumeId }).catch(() => null);
+  if (!stored?.data) return input.files?.length ? "attached" : "unavailable";
+  if (input.files?.length || jpUploadShowsFile(input, stored.name)) return "attached";
   try {
+    const file = jpBase64ToFile(stored);
     const transfer = new DataTransfer();
-    transfer.items.add(jpBase64ToFile(stored));
+    transfer.items.add(file);
     jpSnapshot("file", input);
     input.files = transfer.files;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    return input.files?.length ? "attached" : "blocked";
+    await new Promise((r) => setTimeout(r, 1200));
+    if (jpUploadShowsFile(input, stored.name)) return "attached";
+    // Some drop zones ignore the input's change event; drop the file on them.
+    const zone = input.closest("[class*='drop' i], [class*='upload' i], [role='button'], label") || input.parentElement;
+    if (zone) {
+      const drop = new DataTransfer();
+      drop.items.add(file);
+      for (const type of ["dragenter", "dragover", "drop"]) {
+        zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: drop }));
+      }
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    return jpUploadShowsFile(input, stored.name) || input.files?.length ? "attached" : "blocked";
   } catch (err) {
     console.warn("[JobPilot] Could not attach resume:", err.message);
     return "blocked";
@@ -219,9 +263,9 @@ function jpLoadSession() {
   }
 }
 
-let jpStepObserver = null;
-let jpStepTimer = null;
-let jpStepOffered = false;
+var jpStepObserver = null;
+var jpStepTimer = null;
+var jpStepOffered = false;
 
 function jpUntaggedEmptyFields() {
   return jpQueryAll("input, textarea, select").filter((el) => {
@@ -259,7 +303,7 @@ async function jpCheckNextStep() {
 
 // ---------- Checklist panel ----------
 
-const JP_PANEL_ID = "jobpilot-checklist";
+var JP_PANEL_ID = "jobpilot-checklist";
 
 function jpHideChecklist() {
   document.getElementById(JP_PANEL_ID)?.remove();
@@ -298,9 +342,16 @@ function jpRenderChecklist() {
     return t.length > 60 ? `${t.slice(0, 57)}…` : t;
   };
   const resume = jpCurrentResume;
+  const chosenScore = resume?.scores?.find((s) => s.id === resume.resumeId);
+  const scoreText = !chosenScore ? ""
+    : chosenScore.informative ? ` · ${chosenScore.score}% match` : " · couldn't find the job description to score";
+  const skillsText = chosenScore?.informative
+    ? [chosenScore.matched?.length ? `✓ ${chosenScore.matched.slice(0, 5).join(", ")}` : "",
+       chosenScore.missing?.length ? `✗ ${chosenScore.missing.slice(0, 4).join(", ")}` : ""].filter(Boolean).join("<br>")
+    : "";
   const attach = {
     attached: "📎 Resume file attached",
-    unavailable: "📎 Attach your resume file (upload it once in JobPilot to attach automatically)",
+    unavailable: "📎 Your resume file isn't saved in JobPilot yet. Attach it here, or open JobPilot → Your Resumes → Replace once to attach it automatically next time.",
     blocked: "📎 This site blocked automatic upload — attach your resume manually",
     none: "",
   }[state.attach || "none"];
@@ -319,6 +370,7 @@ function jpRenderChecklist() {
       .mini { border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 6px; font-size: 11px; padding: 1px 6px; margin-left: 4px; cursor: pointer; }
       .resume { background: #f1f5f9; border-radius: 8px; padding: 6px 8px; margin: 8px 0; }
       select { font-size: 12px; margin-left: 4px; }
+      .skills { font-size: 11px; color: #475569; margin-top: 4px; }
       .actions { display: flex; gap: 8px; margin-top: 10px; }
       .btn { flex: 1; border: none; border-radius: 8px; padding: 8px; font-weight: 600; cursor: pointer; }
       .undo { background: #e2e8f0; color: #1a1a2e; } .done { background: #4a3aff; color: #fff; }
@@ -326,11 +378,11 @@ function jpRenderChecklist() {
     <div class="panel" role="dialog" aria-label="JobPilot autofill checklist">
       <div class="head"><span>✨ JobPilot · Filled ${records.length} field${records.length === 1 ? "" : "s"}</span>
         <button class="close" aria-label="Close">×</button></div>
-      ${resume?.name ? `<div class="resume">Resume: <b>${jpEscape(resume.name)}</b>${
-        resume.scores?.length > 1 ? ` · ${resume.scores.find((s) => s.id === resume.resumeId)?.score ?? "?"}% match
+      ${resume?.name ? `<div class="resume">Resume: <b>${jpEscape(resume.name)}</b>${jpEscape(scoreText)}${
+        resume.scores?.length > 1 ? `
           <select class="pick" aria-label="Change resume">${resume.scores.map((s) =>
-            `<option value="${jpEscape(s.id)}" ${s.id === resume.resumeId ? "selected" : ""}>${jpEscape(s.name)} (${s.score}%)</option>`).join("")}
-          </select>` : ""}</div>` : ""}
+            `<option value="${jpEscape(s.id)}" ${s.id === resume.resumeId ? "selected" : ""}>${jpEscape(s.name)}${s.informative ? ` (${s.score}%)` : ""}</option>`).join("")}
+          </select>` : ""}${skillsText ? `<div class="skills">${skillsText.split("<br>").map(jpEscape).join("<br>")}</div>` : ""}</div>` : ""}
       <div class="row"><span class="dot" style="background:#16a34a"></span>${known.length} from your profile and saved answers</div>
       ${review.length ? `<div class="row"><span class="dot" style="background:#2563eb"></span>${review.length} AI answer${review.length === 1 ? "" : "s"} to review
         <ul>${review.map((r) => `<li><a data-go="${jpEscape(r.id)}">${jpEscape(short(r.label))}</a>${
@@ -395,14 +447,14 @@ async function jpSaveDraft(id, button) {
 
 async function jpSwitchResume(resumeId) {
   await chrome.runtime.sendMessage({
-    type: "REMEMBER_RESUME_CHOICE", jobContext: jpLastJobContext, host: location.hostname, resumeId,
+    type: "REMEMBER_RESUME_CHOICE", jobContext: jpLastJobContext, host: location.hostname, url: location.href, resumeId,
   }).catch(() => {});
   jpUndoAll();
   jpForcedResumeId = resumeId;
   await runAutofillFromButton(false);
 }
 
-let jpForcedResumeId = null;
+var jpForcedResumeId = null;
 
 // Ask the user to choose when two resumes match the job about equally well.
 function jpAskResume(pick) {
@@ -436,15 +488,16 @@ async function jpChooseResume(jobContext, isAuto) {
   const forced = jpForcedResumeId || session?.resumeId;
   jpForcedResumeId = null;
   const pick = await chrome.runtime.sendMessage({
-    type: "PICK_RESUME", jobContext, host: location.hostname,
+    type: "PICK_RESUME", jobContext, host: location.hostname, url: location.href,
   }).catch(() => null);
+  if (pick?.jobContext) jpLastJobContext = pick.jobContext;
   if (!pick || pick.error || !pick.resumeId) return pick && !pick.error ? pick : null;
   let resumeId = pick.resumeId;
   if (forced && pick.scores.some((s) => s.id === forced)) resumeId = forced;
   else if (pick.ambiguous && !isAuto) {
     resumeId = await jpAskResume(pick);
     await chrome.runtime.sendMessage({
-      type: "REMEMBER_RESUME_CHOICE", jobContext, host: location.hostname, resumeId,
+      type: "REMEMBER_RESUME_CHOICE", jobContext, host: location.hostname, url: location.href, resumeId,
     }).catch(() => {});
   }
   if (resumeId === pick.resumeId) return pick;

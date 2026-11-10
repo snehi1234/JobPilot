@@ -4,7 +4,8 @@
 import { BACKEND_URL } from "./config.js";
 import { getIdToken, signIn } from "./auth.js";
 import { resolveLocally, rememberAnswers, profileVersion, recordCorrection, isLongQuestion } from "./lib/answer-engine.mjs";
-import { pickResume, companyKey } from "./lib/match-score.mjs";
+import { pickResume, companyKey, extractSkills } from "./lib/match-score.mjs";
+import { postingUrlCandidates, extractJobDescription } from "./lib/job-description.mjs";
 
 // Make clicking the toolbar icon open the side panel automatically.
 chrome.sidePanel
@@ -20,7 +21,22 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
   }
+  // After an install or update, pages that were already open still run the
+  // previous copy of the content scripts, which can no longer reach the
+  // extension. Load the current version into them so the button works
+  // without reloading each tab.
+  if (details.reason === "install" || details.reason === "update") reinjectContentScripts();
 });
+
+async function reinjectContentScripts() {
+  const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] }).catch(() => []);
+  await Promise.all(tabs.map((tab) =>
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      files: ["content-ui.js", "content.js"],
+    }).catch(() => {}) // restricted pages (e.g. the Web Store) can't be scripted
+  ));
+}
 
 // Fallback: also open on click (covers cases where behavior wasn't set yet).
 chrome.action.onClicked.addListener((tab) => {
@@ -146,6 +162,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   const handlers = {
     PICK_RESUME: chooseResume,
+    // Fetch the job description in the background when an application page
+    // opens, so it's ready when the user clicks Autofill.
+    PREFETCH_JOB: async ({ jobContext, url }) => { await enrichJobContext(jobContext, url); return { ok: true }; },
     REMEMBER_RESUME_CHOICE: rememberResumeChoice,
     LEARN_ANSWER: learnAnswer,
     SAVE_TO_LIBRARY: saveToLibrary,
@@ -173,23 +192,69 @@ async function loadResumes() {
     : { resumes: [], defaultResumeId: null };
 }
 
+// Application pages often show only the form. When the page's own text names
+// few skills, read the description from the job posting page instead.
+const jobDescriptionCache = new Map(); // page URL → Promise<description>
+
+function fetchPostingDescription(pageUrl) {
+  const key = String(pageUrl).split("#")[0].split("?")[0];
+  if (!jobDescriptionCache.has(key)) {
+    if (jobDescriptionCache.size > 50) jobDescriptionCache.delete(jobDescriptionCache.keys().next().value);
+    jobDescriptionCache.set(key, downloadPostingDescription(pageUrl));
+  }
+  return jobDescriptionCache.get(key);
+}
+
+async function downloadPostingDescription(pageUrl) {
+  let best = "";
+  for (const url of postingUrlCandidates(pageUrl)) {
+    try {
+      const res = await fetch(url, { credentials: "omit", signal: AbortSignal.timeout(5000) });
+      if (!res.ok) continue;
+      const text = extractJobDescription(await res.text());
+      if (text.length > best.length) best = text;
+      if (best.length > 800) break;
+    } catch { /* offline, blocked, or slow — keep what the page showed */ }
+  }
+  return best;
+}
+
+async function enrichJobContext(jobContext = {}, pageUrl) {
+  const onPage = String(jobContext.description || "");
+  const onPageSkills = extractSkills(onPage).size;
+  if (!pageUrl || (onPageSkills >= 5 && onPage.length > 1500)) return jobContext;
+  const fetched = await fetchPostingDescription(pageUrl);
+  const fetchedSkills = extractSkills(fetched).size;
+  const better = fetchedSkills > onPageSkills || (fetchedSkills === onPageSkills && fetched.length > onPage.length);
+  return better && fetched ? { ...jobContext, description: fetched } : jobContext;
+}
+
 // Pick the resume for this application (best match, remembered choice for
 // this company, or the default) and report the scores.
 async function chooseResume(message) {
   const { resumes, defaultResumeId } = await loadResumes();
   const { resumeChoices = {} } = await chrome.storage.local.get("resumeChoices");
-  const key = companyKey(message.jobContext, message.host);
-  const pick = pickResume(resumes, message.jobContext, {
+  const jobContext = await enrichJobContext(message.jobContext, message.url);
+  const key = companyKey(jobContext, message.host, message.url);
+  const pick = pickResume(resumes, jobContext, {
     defaultId: defaultResumeId,
     rememberedId: message.ignoreRemembered ? undefined : resumeChoices[key],
   });
   const chosen = resumes.find((r) => r.id === pick.resumeId);
-  return { ...pick, name: chosen?.name || "", text: chosen?.text || "", count: resumes.length };
+  const { resumeFiles = {} } = await chrome.storage.local.get("resumeFiles");
+  return {
+    ...pick,
+    name: chosen?.name || "",
+    text: chosen?.text || "",
+    count: resumes.length,
+    hasFile: Boolean(resumeFiles[pick.resumeId]),
+    jobContext,
+  };
 }
 
-async function rememberResumeChoice({ jobContext, host, resumeId }) {
+async function rememberResumeChoice({ jobContext, host, url, resumeId }) {
   const { resumeChoices = {} } = await chrome.storage.local.get("resumeChoices");
-  const key = companyKey(jobContext, host);
+  const key = companyKey(jobContext, host, url);
   if (!key || !resumeId) return { ok: false };
   const next = { ...resumeChoices, [key]: resumeId };
   const keys = Object.keys(next);

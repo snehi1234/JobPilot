@@ -5,7 +5,7 @@ Hiresprint is a Chrome extension that uses an LLM to fill out online job applica
 > **Status:** Version 0.1.2 is submitted to the Chrome Web Store and pending review.
 > Store link (active once published): https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep
 
-![Hiresprint onboarding](store-assets/hiresprint-onboarding-1280x800.png)
+![Hiresprint filling an application](store-assets/hiresprint-autofill-1280x800.png)
 
 ## Features
 

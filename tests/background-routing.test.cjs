@@ -213,3 +213,37 @@ test("saved long answers fill matching questions; drafts and files route correct
   assert.equal((await h.request({ type: "GET_RESUME_FILE", resumeId: "sw" })).name, "cv.pdf");
   assert.equal(await h.request({ type: "GET_RESUME_FILE", resumeId: "missing" }), null);
 });
+
+test("cover letters skip the answer engine, are written once per job and resume, and keep edits", async () => {
+  const letter = "Dear Hiring Team,\n\n" + "Built systems. ".repeat(40) + "\n\nSincerely,\nAlex";
+  const h = harness("https://jobpilot.example.invalid", [
+    { status: 200, body: { suggestions: [] } },
+    { status: 200, body: { letter } },
+    { status: 200, body: { letter: letter + " v2" } },
+  ]);
+  const generated = await h.request({
+    type: "GENERATE_ANSWERS", profile: "P", structured: {}, jobContext: {},
+    fields: [{ id: "1", label: "Cover Letter", kind: "text", tag: "textarea", occurrence: 0 }, { id: "2", label: "Portfolio URL", kind: "text", occurrence: 0 }],
+  });
+  assert.equal(JSON.stringify(JSON.parse(h.calls[0].options.body).fields.map((f) => f.id)), JSON.stringify(["2"]));
+  assert.equal(generated.suggestions.length, 0);
+
+  const job = { title: "Data Engineer", company: "Acme" };
+  const message = { type: "WRITE_COVER_LETTER", jobContext: job, url: "https://jobs.example/acme/1", resumeId: "de", profile: "Resume", structured: { firstName: "Alex" } };
+  const first = await h.request(message);
+  assert.equal(first.letter, letter);
+  assert.equal(h.calls[1].url, "https://jobpilot.example.invalid/api/cover-letter");
+  assert.equal(JSON.parse(h.calls[1].options.body).jobContext.title, "Data Engineer");
+  const again = await h.request(message);
+  assert.equal(again.cached, true);
+  assert.equal(h.calls.length, 2, "the same job and resume reuse the letter");
+
+  await h.request({ ...message, type: "SAVE_COVER_LETTER", letter: "Edited letter" });
+  assert.equal((await h.request(message)).letter, "Edited letter");
+  const fresh = await h.request({ ...message, regenerate: true });
+  assert.match(fresh.letter, /v2$/);
+  assert.equal(h.calls.length, 3);
+
+  h.store.coverLetterFile = { name: "cover.pdf", type: "application/pdf", data: "QUJD", text: "Hello" };
+  assert.equal((await h.request({ type: "GET_COVER_LETTER_FILE" })).name, "cover.pdf");
+});

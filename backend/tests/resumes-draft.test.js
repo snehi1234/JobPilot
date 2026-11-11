@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sanitizeResumes, MAX_RESUMES } from "../lib/resumes.js";
-import { buildDraftPrompt, DRAFT_MODES } from "../lib/prompts.js";
+import { buildDraftPrompt, DRAFT_MODES, buildCoverLetterPrompt } from "../lib/prompts.js";
 
 test("resume lists are validated, trimmed, de-duplicated and capped", () => {
   const many = Array.from({ length: 8 }, (_, i) => ({ id: `r${i}`, name: `R${i}`, text: "text" }));
@@ -33,4 +33,17 @@ test("draft prompts include the task for each mode and forbid invented facts", (
   assert.match(prompt, /half as long/);
   assert.match(prompt, /Never invent/);
   assert.match(prompt, /Resume text/);
+});
+
+test("cover letter prompts ask for ~250 grounded words for the specific job", () => {
+  const prompt = buildCoverLetterPrompt({
+    jobContext: { title: "Backend Engineer", company: "Software Engineer, Backend @ Wisdom AI", description: "Kafka and Go" },
+    profile: "Resume text", structured: { firstName: "Alex", lastName: "Example" },
+  });
+  assert.match(prompt, /Job title: Backend Engineer/);
+  assert.match(prompt, /Company: Wisdom AI/);
+  assert.match(prompt, /About 250 words/);
+  assert.match(prompt, /Never invent/);
+  assert.match(prompt, /Candidate name: Alex Example/);
+  assert.match(prompt, /Kafka and Go/);
 });

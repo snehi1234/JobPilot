@@ -167,3 +167,34 @@ export const DRAFT_GEN_CONFIG = {
   maxOutputTokens: 1024,
   responseMimeType: "application/json",
 };
+
+export function buildCoverLetterPrompt({ jobContext = {}, profile, structured = {} }) {
+  const name = [structured.firstName, structured.lastName].filter(Boolean).join(" ");
+  return `Write a cover letter for this job application, using only facts from the candidate's resume.
+Job title: ${String(jobContext.title || "(unknown)").slice(0, 200)}
+Company: ${String(jobContext.company || "(unknown)").replace(/^.* @ /, "").slice(0, 120)}
+Job description:
+"""
+${String(jobContext.description || "").slice(0, 5000)}
+"""
+Candidate resume and notes:
+"""
+${String(profile || "").slice(0, 12000)}
+"""
+Candidate name: ${name || "(use the name from the resume)"}
+Rules:
+- About 250 words (220–280), 3–4 short paragraphs, first person.
+- Start with "Dear Hiring Team," and end with "Sincerely," followed by the candidate's name on the next line.
+- Open with the specific role and company; connect 2–3 concrete achievements from the resume (with their numbers, if the resume has them) to the job's main requirements.
+- Never invent employers, titles, numbers, degrees, or skills that are not in the resume. No placeholders like [Company].
+- Plain, confident, specific language; no clichés ("I am writing to express", "passionate", "dynamic").
+- No date, address block, or subject line.
+
+Respond with ONLY this JSON: {"letter":"<the full letter, paragraphs separated by \\n\\n>"}`;
+}
+
+export const COVER_LETTER_GEN_CONFIG = {
+  temperature: 0.4,
+  maxOutputTokens: 1400,
+  responseMimeType: "application/json",
+};

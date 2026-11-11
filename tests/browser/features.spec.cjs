@@ -281,7 +281,93 @@ test("on a job overview page, Autofill opens the application form and fills it",
   await page.goto(OVERVIEW);
   await expect(page.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
   await autofill(page);
-  await expect(page).toHaveURL(/\/application$/, { timeout: 10000 });
+  await expect(page).toHaveURL(/\/application$/, { timeout: 20000 });
   await expect(page.locator("#fn")).toHaveValue("Alex", { timeout: 15000 });
   await expect(page.locator("#em")).toHaveValue(profile.email);
+});
+
+// ---------- Cover letters ----------
+
+const COVER_TEXT_URL = "https://careers.acme.test/jobs/321/apply";
+const COVER_FILE_URL = "https://careers.acme.test/jobs/654/apply";
+const coverPage = (coverField) => `<!doctype html><html><head><title>Acme - Data Engineer</title></head><body>
+<h1>Data Engineer</h1><div class="job-description">Own ETL pipelines using Spark, Airflow and dbt on Snowflake. Strong SQL and Python.</div>
+<form onsubmit="event.preventDefault()">
+  <label for="fn">First name</label><input id="fn">
+  <label for="em">Email</label><input id="em" type="email">
+  <div><div><span>Resume*</span></div><div><input type="file" id="resume"></div></div>
+  ${coverField}
+</form></body></html>`;
+
+async function openCoverPage(app, url, coverField, settings) {
+  const job = await setup(app);
+  await job.close();
+  await app.worker.evaluate((s) => chrome.storage.local.set(s), settings);
+  await app.context.route(url, (route) => route.fulfill({ contentType: "text/html", body: coverPage(coverField) }));
+  const page = await app.context.newPage();
+  await page.goto(url);
+  await expect(page.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+  await autofill(page);
+  await expect(page.locator("#fn")).toHaveValue("Alex", { timeout: 10000 });
+  await expect(checklist(page)).toBeAttached({ timeout: 15000 });
+  return page;
+}
+
+const panelText = (page) => checklist(page).evaluate((host) => host.shadowRoot.querySelector(".panel").innerText);
+
+test("AI cover letter is written for the job and pasted into a cover-letter text box", async ({ app }) => {
+  const page = await openCoverPage(app, COVER_TEXT_URL,
+    '<label for="cl">Cover Letter</label><textarea id="cl"></textarea>', { coverLetterMode: "ai" });
+  await expect(page.locator("#cl")).toHaveValue(/^Dear Hiring Team,[\s\S]*Data Engineer[\s\S]*Sincerely,\nAlex Example$/, { timeout: 10000 });
+  await expect(page.locator("#cl")).toHaveAttribute("data-jobpilot-source", "draft");
+  await expect.poll(() => panelText(page)).toMatch(/Cover letter pasted \(AI-written for this job/);
+  expect(app.api.coverLetters).toBe(1);
+  const coverCall = app.api.calls.find((c) => c.endpoint === "/api/cover-letter");
+  expect(coverCall.body.profile).toContain("Spark"); // the resume picked for this job (Data)
+  expect(coverCall.body.jobContext.description).toContain("Airflow");
+  for (const call of app.api.calls.filter((c) => c.endpoint === "/api/generate")) {
+    expect(call.body.fields.some((f) => /cover letter/i.test(f.label))).toBe(false);
+  }
+
+  // Edit the letter from the checklist.
+  await checklist(page).evaluate((host) => host.shadowRoot.querySelector("[data-cover-edit]").click());
+  const editor = page.locator("#jobpilot-cover-editor");
+  await expect(editor).toBeAttached();
+  await editor.evaluate((host) => {
+    const area = host.shadowRoot.querySelector("textarea");
+    area.value = "Dear Hiring Team,\n\nEdited by me.\n\nSincerely,\nAlex Example";
+    host.shadowRoot.querySelector(".save").click();
+  });
+  await expect(page.locator("#cl")).toHaveValue(/Edited by me/);
+  await expect.poll(() => app.worker.evaluate(async () => JSON.stringify((await chrome.storage.local.get("coverLetterCache")).coverLetterCache))).toContain("Edited by me");
+});
+
+test("AI cover letter is attached as a PDF when the form has a cover-letter upload", async ({ app }) => {
+  const page = await openCoverPage(app, COVER_FILE_URL,
+    '<div><div><span>Cover letter</span></div><div><input type="file" id="cover"></div></div>', { coverLetterMode: "ai" });
+  await expect.poll(() => page.locator("#cover").evaluate((el) => el.files[0]?.name || ""), { timeout: 10000 }).toMatch(/^Alex Example - Cover Letter - .*\.pdf$/);
+  const head = await page.locator("#cover").evaluate(async (el) => (await el.files[0].text()).slice(0, 8));
+  expect(head).toBe("%PDF-1.4");
+  const pdfText = await page.locator("#cover").evaluate(async (el) => await el.files[0].text());
+  expect(pdfText).toContain("(Dear Hiring Team,) Tj");
+  expect(pdfText).toContain("%%EOF");
+  await expect.poll(() => page.locator("#resume").evaluate((el) => el.files[0]?.name || "")).toBe("data.pdf");
+  await expect.poll(() => panelText(page)).toMatch(/Cover letter attached \(AI-written/);
+});
+
+test("the user's own cover letter file is attached to every job; 'Don't add' leaves it to the user", async ({ app }) => {
+  const file = { name: "my-cover.pdf", type: "application/pdf", data: Buffer.from("%PDF-1.4 mine").toString("base64"), text: "My letter" };
+  const page = await openCoverPage(app, COVER_FILE_URL,
+    '<div><div><span>Cover letter</span></div><div><input type="file" id="cover"></div></div>', { coverLetterMode: "file", coverLetterFile: file });
+  await expect.poll(() => page.locator("#cover").evaluate((el) => el.files[0]?.name || ""), { timeout: 10000 }).toBe("my-cover.pdf");
+  await expect.poll(() => panelText(page)).toMatch(/Cover letter attached \(your file\)/);
+  expect(app.api.coverLetters || 0).toBe(0);
+
+  await app.worker.evaluate(() => chrome.storage.local.set({ coverLetterMode: "off" }));
+  await page.reload();
+  await expect(page.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+  await autofill(page);
+  await expect(checklist(page)).toBeAttached({ timeout: 15000 });
+  await expect.poll(() => panelText(page)).toMatch(/asks for a cover letter/);
+  expect(await page.locator("#cover").evaluate((el) => el.files.length)).toBe(0);
 });

@@ -219,6 +219,28 @@
       ></textarea>
     </section>
 
+    <!-- Cover letter -->
+    <section class="card">
+      <h2>Cover letter</h2>
+      <p class="hint">Used only when an application asks for a cover letter.</p>
+      <div class="cover-options" role="radiogroup" aria-label="Cover letter">
+        <label><input type="radio" name="coverMode" value="ai" /> <b>AI-written for each job</b> — about 250 words from the resume picked for the job and the job description</label>
+        <label><input type="radio" name="coverMode" value="file" /> <b>Use my file</b> — the same cover letter for every job</label>
+        <label><input type="radio" name="coverMode" value="off" /> <b>Don't add</b> — leave cover letters to me</label>
+      </div>
+      <div id="coverFileRow" class="upload-row hidden">
+        <label for="coverFile" class="btn-upload">📝 Upload cover letter (PDF or Word)</label>
+        <input
+          type="file"
+          id="coverFile"
+          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
+          hidden
+        />
+        <span id="coverFileName" class="file-name"></span>
+      </div>
+      <p class="hint" style="margin: 6px 0 0;">Text boxes get the letter pasted in; upload fields get a PDF. Your file stays on this device.</p>
+    </section>
+
     <!-- Match for the job open in the current tab -->
     <section id="matchCard" class="card hidden">
       <h2>Match for this job</h2>

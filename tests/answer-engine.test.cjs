@@ -139,3 +139,12 @@ test("user-facing extension pages never name internal vendors or plans", () => {
     assert.doesNotMatch(text, /\b(groq|supabase|vercel|gemini|gpt-oss)\b|free[- ]tier|free plan|paid provider/i, file);
   }
 });
+
+test("cover-letter questions are never answered as ordinary questions", async () => {
+  const { isCoverLetterField } = await load();
+  assert.equal(isCoverLetterField(f(1, "Cover Letter", "text", { tag: "textarea" })), true);
+  assert.equal(isCoverLetterField(f(2, "Covering letter (optional)")), true);
+  assert.equal(isCoverLetterField(f(3, "Motivation letter")), true);
+  assert.equal(isCoverLetterField(f(4, "Cover letter", "combobox")), false);
+  assert.equal(isCoverLetterField(f(5, "Why do you want to work here?")), false);
+});

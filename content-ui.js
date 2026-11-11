@@ -115,6 +115,7 @@ function jpUndoAll() {
   }
   jpClearMarks();
   jpFillRecords.clear();
+  jpCoverLetter = null;
   jpHideChecklist();
   jpToast(`Undid ${undone} change${undone === 1 ? "" : "s"}.`, "info");
 }
@@ -174,18 +175,21 @@ var jpNormalize = (text) => String(text || "").normalize("NFD").replace(/[\u0300
 // transcript, …). Accents are ignored so "Résumé" matches.
 function jpFileInputPurpose(input) {
   const own = jpNormalize([input.name, input.id, input.getAttribute("aria-label"), input.getAttribute("data-testid")].join(" "));
-  if (/cover|transcript|portfolio/.test(own)) return "other";
+  if (/cover|motivation/.test(own)) return "cover";
+  if (/transcript|portfolio/.test(own)) return "other";
   if (/resume|\bcv\b|curriculum/.test(own)) return "resume";
   let el = input;
   for (let depth = 0; depth < 6 && el?.parentElement; depth++) {
     el = el.parentElement;
     const text = jpNormalize(el.textContent).slice(0, 400);
     if (/autofill|auto-fill/.test(text)) return "parser";
-    const resumeAt = text.search(/resume|\bcv\b|curriculum vitae/);
-    const otherAt = text.search(/cover letter|transcript|portfolio|writing sample|other (documents?|files?)|additional (documents?|files?)/);
-    if (resumeAt < 0 && otherAt < 0) continue;
-    if (otherAt >= 0 && (resumeAt < 0 || otherAt < resumeAt)) return "other";
-    return "resume";
+    // The keyword nearest the start of the field's text names the field.
+    const found = [
+      ["resume", text.search(/resume|\bcv\b|curriculum vitae/)],
+      ["cover", text.search(/cover(ing)? letter|motivation(al)? letter|letter of (motivation|interest)/)],
+      ["other", text.search(/transcript|portfolio|writing sample|other (documents?|files?)|additional (documents?|files?)/)],
+    ].filter(([, at]) => at >= 0).sort((a, b) => a[1] - b[1]);
+    if (found.length) return found[0][0];
   }
   return "unknown";
 }
@@ -219,8 +223,14 @@ async function jpAttachResume(resumeId) {
   const stored = await chrome.runtime.sendMessage({ type: "GET_RESUME_FILE", resumeId }).catch(() => null);
   if (!stored?.data) return input.files?.length ? "attached" : "unavailable";
   if (input.files?.length || jpUploadShowsFile(input, stored.name)) return "attached";
+  return jpAttachFile(input, jpBase64ToFile(stored));
+}
+
+// Put a file into an upload field the way the site expects. With `replace`,
+// an existing file is swapped (e.g. after editing the cover letter).
+async function jpAttachFile(input, file, { replace = false } = {}) {
+  if (!replace && (input.files?.length || jpUploadShowsFile(input, file.name))) return "attached";
   try {
-    const file = jpBase64ToFile(stored);
     const transfer = new DataTransfer();
     transfer.items.add(file);
     jpSnapshot("file", input);
@@ -228,7 +238,7 @@ async function jpAttachResume(resumeId) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 1200));
-    if (jpUploadShowsFile(input, stored.name)) return "attached";
+    if (jpUploadShowsFile(input, file.name)) return "attached";
     // Some drop zones ignore the input's change event; drop the file on them.
     const zone = input.closest("[class*='drop' i], [class*='upload' i], [role='button'], label") || input.parentElement;
     if (zone) {
@@ -239,11 +249,165 @@ async function jpAttachResume(resumeId) {
       }
       await new Promise((r) => setTimeout(r, 1200));
     }
-    return jpUploadShowsFile(input, stored.name) || input.files?.length ? "attached" : "blocked";
+    return jpUploadShowsFile(input, file.name) || input.files?.length ? "attached" : "blocked";
   } catch (err) {
-    console.warn("[JobPilot] Could not attach resume:", err.message);
+    console.warn("[JobPilot] Could not attach file:", err.message);
     return "blocked";
   }
+}
+
+// ---------- Cover letter ----------
+
+var JP_COVER_LABEL = /cover(ing)? letter|motivation(al)? letter|letter of (motivation|interest)/i;
+var jpCoverLetter = null; // { mode, text, how: "pasted" | "attached", el }
+
+function jpCoverTargets() {
+  const files = jpQueryAll("input[type='file']").filter((input) => jpFileInputPurpose(input) === "cover");
+  const texts = [];
+  for (const [id, field] of jpFieldsById) {
+    if (!JP_COVER_LABEL.test(field.label || "") || !(field.kind === "text" || field.tag === "textarea")) continue;
+    const el = fieldRegistry[id] ? jpResolveField(id, fieldRegistry[id]) : null;
+    if (el) texts.push({ id, el, label: field.label });
+  }
+  return { files, texts };
+}
+
+// Turns plain text into a simple one-column PDF (Helvetica, US Letter).
+function jpTextToPdf(text, fileName) {
+  const clean = String(text || "")
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2013\u2014]/g, "-")
+    .replace(/\u2026/g, "...").replace(/\u00a0/g, " ").normalize("NFKD").replace(/[^\x20-\x7e\n]/g, "");
+  const lines = [];
+  for (const paragraph of clean.split("\n")) {
+    let line = "";
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      if ((line + " " + word).trim().length > 84) { lines.push(line); line = word; } else line = (line + " " + word).trim();
+    }
+    lines.push(line);
+  }
+  const perPage = 44;
+  const pages = [];
+  for (let i = 0; i < lines.length; i += perPage) pages.push(lines.slice(i, i + perPage));
+  const esc = (s) => s.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"];
+  const kids = [];
+  for (const page of pages) {
+    const stream = `BT /F1 11 Tf 15 TL 72 720 Td ${page.map((l) => `(${esc(l)}) Tj T*`).join(" ")} ET`;
+    objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length} 0 R >>`);
+    kids.push(`${objects.length} 0 R`);
+  }
+  objects[1] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${kids.length} >>`;
+  let pdf = "%PDF-1.4\n";
+  const offsets = [];
+  objects.forEach((body, i) => { offsets.push(pdf.length); pdf += `${i + 1} 0 obj\n${body}\nendobj\n`; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new File([pdf], fileName, { type: "application/pdf" });
+}
+
+function jpCoverFileName(name) {
+  const company = String(jpLastJobContext?.company || "").replace(/^.* @ /, "");
+  return `${[name, "Cover Letter", company].filter(Boolean).join(" - ").replace(/[\\/:*?"<>|]+/g, "").slice(0, 100)}.pdf`;
+}
+
+// Paste the letter into a cover-letter text box, or attach it as a PDF.
+async function jpPlaceCoverLetter(text, { file, replace = false } = {}) {
+  const { files, texts } = jpCoverTargets();
+  if (texts.length) {
+    const { el, id, label } = texts[0];
+    jpSnapshot("value", el);
+    fillText(el, text);
+    jpFillRecords.set(id, { source: jpCoverLetter?.mode === "file" ? "profile" : "draft", label, el, value: text, kind: "text" });
+    jpMark(el, jpCoverLetter?.mode === "file" ? "profile" : "draft");
+    return { how: "pasted", status: "added" };
+  }
+  if (files.length) {
+    const { structured } = await chrome.storage.local.get("structured");
+    const name = [structured?.firstName, structured?.lastName].filter(Boolean).join(" ");
+    const result = await jpAttachFile(files[0], file || jpTextToPdf(text, jpCoverFileName(name)), { replace });
+    return { how: "attached", status: result === "attached" ? "added" : "blocked" };
+  }
+  return { status: "none" };
+}
+
+// Add a cover letter when the form asks for one, following the user's choice
+// in the panel: their own file, an AI letter for this job, or nothing.
+async function jpHandleCoverLetter() {
+  const { files, texts } = jpCoverTargets();
+  if (!files.length && !texts.length) return null;
+  const { coverLetterMode = "off" } = await chrome.storage.local.get("coverLetterMode");
+  if (coverLetterMode === "file") {
+    const stored = await chrome.runtime.sendMessage({ type: "GET_COVER_LETTER_FILE" }).catch(() => null);
+    if (!stored?.data) return { status: "missing" };
+    jpCoverLetter = { mode: "file", text: stored.text || "" };
+    if (texts.length && !stored.text) return { status: "missing-text" };
+    return { ...(await jpPlaceCoverLetter(stored.text || "", { file: texts.length ? null : jpBase64ToFile(stored) })), mode: "file" };
+  }
+  if (coverLetterMode !== "ai") return { status: "off" };
+  const { profile, structured, uploadedResumeText } = await chrome.storage.local.get(["profile", "structured", "uploadedResumeText"]);
+  const result = await chrome.runtime.sendMessage({
+    type: "WRITE_COVER_LETTER",
+    jobContext: jpLastJobContext,
+    url: location.href,
+    resumeId: jpCurrentResume?.resumeId,
+    structured,
+    profile: [profile, jpCurrentResume?.text || uploadedResumeText].filter(Boolean).join("\n\n"),
+  }).catch((err) => ({ error: err.message }));
+  if (result?.error || !result?.letter) return { status: "error", message: result?.error || "No letter was returned." };
+  jpCoverLetter = { mode: "ai", text: result.letter };
+  return { ...(await jpPlaceCoverLetter(result.letter)), mode: "ai" };
+}
+
+// Edit the letter in a small dialog, then paste or re-attach it.
+function jpEditCoverLetter() {
+  if (!jpCoverLetter?.text) return;
+  const host = document.createElement("div");
+  host.id = "jobpilot-cover-editor";
+  Object.assign(host.style, { all: "initial", position: "fixed", inset: "0", zIndex: "2147483647" });
+  const root = host.attachShadow({ mode: "open" });
+  root.innerHTML = `
+    <style>
+      .back { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; }
+      .box { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a2e;
+        width: min(640px, 92vw); border-radius: 12px; padding: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+      textarea { width: 100%; height: 50vh; box-sizing: border-box; font: 13px/1.5 Georgia, serif; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; }
+      .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+      button { border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+      .cancel { background: #e2e8f0; } .save { background: #4a3aff; color: #fff; } .count { margin-right: auto; color: #64748b; align-self: center; }
+    </style>
+    <div class="back"><div class="box" role="dialog" aria-label="Edit cover letter">
+      <b>Cover letter</b>
+      <textarea aria-label="Cover letter text"></textarea>
+      <div class="row"><span class="count"></span><button class="cancel">Cancel</button><button class="save">Save & use</button></div>
+    </div></div>`;
+  const area = root.querySelector("textarea");
+  const count = root.querySelector(".count");
+  area.value = jpCoverLetter.text;
+  const updateCount = () => (count.textContent = `${area.value.split(/\s+/).filter(Boolean).length} words`);
+  area.addEventListener("input", updateCount);
+  updateCount();
+  root.querySelector(".cancel").onclick = () => host.remove();
+  root.querySelector(".save").onclick = async () => {
+    const text = area.value.trim();
+    host.remove();
+    if (!text) return;
+    jpCoverLetter.text = text;
+    if (jpCoverLetter.mode === "ai") {
+      chrome.runtime.sendMessage({
+        type: "SAVE_COVER_LETTER", jobContext: jpLastJobContext, url: location.href, resumeId: jpCurrentResume?.resumeId, letter: text,
+      }).catch(() => {});
+    }
+    const placed = await jpPlaceCoverLetter(text, { replace: true });
+    if (jpChecklistState) {
+      jpChecklistState.cover = { ...placed, mode: jpCoverLetter.mode };
+      jpRenderChecklist();
+    }
+    jpToast(placed.status === "added" ? "Cover letter updated." : "Couldn't update the cover letter on this page.", placed.status === "added" ? "success" : "note");
+  };
+  document.documentElement.appendChild(host);
+  area.focus();
 }
 
 // ---------- Multi-step session ----------
@@ -355,6 +519,16 @@ function jpRenderChecklist() {
     blocked: "📎 This site blocked automatic upload — attach your resume manually",
     none: "",
   }[state.attach || "none"];
+  const cover = state.cover;
+  const coverText = !cover ? "" : ({
+    writing: "📝 Writing a cover letter for this job…",
+    added: `📝 Cover letter ${cover.how === "pasted" ? "pasted" : "attached"} (${cover.mode === "ai" ? "AI-written for this job — review it" : "your file"})`,
+    blocked: "📝 This site blocked the cover letter upload — attach it manually",
+    off: "📝 This job asks for a cover letter. To add one automatically, choose AI-written or your own file under Cover letter in JobPilot.",
+    missing: "📝 Upload your cover letter file in JobPilot (Cover letter section) to add it automatically.",
+    "missing-text": "📝 This job wants the cover letter as text, but your file's text couldn't be read. Paste it yourself.",
+    error: `📝 Couldn't write a cover letter: ${cover.message || "please try again."}`,
+  }[cover.status] || "");
   root.innerHTML = `
     <style>
       .panel { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1a1a2e;
@@ -392,6 +566,7 @@ function jpRenderChecklist() {
       ${needs.length ? `<div class="row"><span class="dot" style="background:#d97706"></span>${needs.length} need you
         <ul>${needs.map((n) => `<li><a data-go="${jpEscape(n.id)}">${jpEscape(short(n.label))}</a></li>`).join("")}</ul></div>` : ""}
       ${attach ? `<div class="row">${jpEscape(attach)}</div>` : ""}
+      ${coverText ? `<div class="row">${jpEscape(coverText)}${state.cover?.status === "added" && jpCoverLetter?.text ? ` <button class="mini" data-cover-edit>Edit</button>` : ""}</div>` : ""}
       <div class="row" style="color:#64748b">Review everything, then submit the application yourself.</div>
       <div class="actions"><button class="btn undo">Undo all</button><button class="btn done">Done</button></div>
     </div>`;
@@ -401,6 +576,8 @@ function jpRenderChecklist() {
   root.querySelectorAll("[data-go]").forEach((a) => (a.onclick = () => jpFocusField(a.dataset.go)));
   root.querySelectorAll("[data-draft]").forEach((b) => (b.onclick = () => jpReviseDraft(b.dataset.id, b.dataset.draft, b)));
   root.querySelectorAll("[data-save]").forEach((b) => (b.onclick = () => jpSaveDraft(b.dataset.save, b)));
+  const coverEdit = root.querySelector("[data-cover-edit]");
+  if (coverEdit) coverEdit.onclick = jpEditCoverLetter;
   const pick = root.querySelector(".pick");
   if (pick) pick.onchange = () => jpSwitchResume(pick.value);
   document.documentElement.appendChild(host);

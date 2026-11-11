@@ -27,6 +27,9 @@ const els = {
   matchCard: document.getElementById("matchCard"),
   matchScores: document.getElementById("matchScores"),
   matchSkills: document.getElementById("matchSkills"),
+  coverFile: document.getElementById("coverFile"),
+  coverFileName: document.getElementById("coverFileName"),
+  coverFileRow: document.getElementById("coverFileRow"),
 };
 
 // IDs of the structured "Quick Details" fields (all prefixed sf_).
@@ -391,6 +394,50 @@ function renderResumeList() {
       row.after(warn);
     }
   }).catch(() => {});
+}
+
+// ---------- Cover letter ----------
+
+async function initCoverLetter() {
+  const radios = [...document.querySelectorAll("input[name='coverMode']")];
+  const show = async () => {
+    const { coverLetterMode = "off", coverLetterFile } = await chrome.storage.local.get(["coverLetterMode", "coverLetterFile"]);
+    radios.forEach((r) => (r.checked = r.value === coverLetterMode));
+    els.coverFileRow.classList.toggle("hidden", coverLetterMode !== "file");
+    els.coverFileName.textContent = coverLetterFile?.name ? `✓ ${coverLetterFile.name}` : "No file yet";
+  };
+  radios.forEach((radio) => radio.addEventListener("change", async () => {
+    await chrome.storage.local.set({ coverLetterMode: radio.value });
+    await show();
+    const { coverLetterFile } = await chrome.storage.local.get("coverLetterFile");
+    showStatus(
+      radio.value === "ai" ? "Cover letters will be written for each job from your resume and the job description. Review them before submitting."
+        : radio.value === "file" ? (coverLetterFile ? "Your cover letter file will be used for every job." : "Upload your cover letter file below.")
+        : "JobPilot won't add cover letters.",
+      radio.value === "file" && !coverLetterFile ? "note" : "success"
+    );
+  }));
+  els.coverFile.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > MAX_RESUME_FILE_BYTES) return showStatus("Please choose a file under 5 MB.", "error");
+    els.coverFileName.textContent = `Reading ${file.name}…`;
+    const read = await readResumeFile(file);
+    const data = await fileToBase64(file).catch(() => null);
+    if (!data) return showStatus("Couldn't read that file. Please try again.", "error");
+    await chrome.storage.local.set({
+      coverLetterFile: { name: file.name, type: read?.type || file.type || "application/pdf", data, text: read?.text || "" },
+      coverLetterMode: "file",
+    });
+    await show();
+    showStatus(
+      read?.text ? "Cover letter saved. It will be attached (or pasted into text boxes) on every application that asks for one."
+        : "Cover letter saved. It will be attached; its text couldn't be read, so text boxes will be left for you.",
+      read?.text ? "success" : "note"
+    );
+  });
+  await show();
 }
 
 // ---------- Match for the open job ----------
@@ -1004,7 +1051,7 @@ async function initAuth() {
   authEls.signOutBtn.addEventListener("click", async () => {
     await signOut();
     // Clear locally cached profile so the floating button can't use it either.
-    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "parseCache", "answerMemory", "answerCorrections", "answerLibrary", "resumes", "resumeFiles", "resumeChoices", "defaultResumeId"]);
+    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "parseCache", "answerMemory", "answerCorrections", "answerLibrary", "resumes", "resumeFiles", "resumeChoices", "defaultResumeId", "coverLetterMode", "coverLetterFile", "coverLetterCache"]);
     renderAuth(null);
     clearFormUI();
     gateContent(false);
@@ -1014,14 +1061,14 @@ async function initAuth() {
 // Permanently delete the signed-in user's cloud + local profile data.
 async function deleteMyData() {
   const sure = confirm(
-    "Delete all your JobPilot data (profile, resumes, saved answers, demographics)?\n\nThis cannot be undone."
+    "Delete all your JobPilot data (profile, resumes, cover letter, saved answers, demographics)?\n\nThis cannot be undone."
   );
   if (!sure) return;
 
   els.deleteData.disabled = true;
   try {
     await cloudDelete();
-    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled", "parseCache", "answerMemory", "answerCorrections", "answerLibrary", "resumes", "resumeFiles", "resumeChoices", "defaultResumeId"]);
+    await chrome.storage.local.remove(["profile", "structured", "uploadedResumeText", "autoFillEnabled", "parseCache", "answerMemory", "answerCorrections", "answerLibrary", "resumes", "resumeFiles", "resumeChoices", "defaultResumeId", "coverLetterMode", "coverLetterFile", "coverLetterCache"]);
     clearFormUI();
     showStatus("Your saved profile and resume have been deleted ✓", "success");
     setTimeout(hideStatus, 2500);
@@ -1197,6 +1244,7 @@ els.replaceFile.addEventListener("change", (e) => {
 els.deleteData.addEventListener("click", deleteMyData);
 initFabToggle();
 initAutoFillToggle();
+initCoverLetter().catch((err) => console.error("[JobPilot] Could not load cover letter settings:", err));
 refreshFillAvailability();
 
 initAuth();

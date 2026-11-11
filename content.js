@@ -1602,7 +1602,17 @@ async function jpFinishAutofill(pick, needs) {
   const attach = await jpAttachResume(pick?.resumeId);
   jpSaveSession(pick);
   jpWatchForNextStep();
-  jpShowChecklist({ needs, attach });
+  const coverTargets = jpCoverTargets();
+  const asksCover = coverTargets.files.length > 0 || coverTargets.texts.length > 0;
+  const { coverLetterMode } = asksCover ? await chrome.storage.local.get("coverLetterMode") : {};
+  jpShowChecklist({ needs, attach, cover: asksCover && coverLetterMode === "ai" ? { status: "writing" } : null });
+  if (asksCover) {
+    const cover = await jpHandleCoverLetter();
+    if (jpChecklistState) {
+      jpChecklistState.cover = cover;
+      jpRenderChecklist();
+    }
+  }
 }
 
 // Short, friendly summary. Fields left for the user are a normal outcome

@@ -53,6 +53,7 @@ make mistakes.
 • Colour-coded fills, a review checklist, and one-click undo
 • Learns from your corrections and reuses answers you save
 • Drafts long answers you can shorten or expand
+• Cover letters: AI-written for each job, or your own file — pasted or attached as PDF
 • Offers editable suggestions in the side panel
 • Lets you disable automatic filling and delete your saved profile
 • Free to use, with a fair monthly usage limit

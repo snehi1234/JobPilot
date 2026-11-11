@@ -256,7 +256,7 @@ test("the real side-panel toggle persists consent and reports storage errors", a
     return elements.get(id);
   };
   const context = vm.createContext({
-    document: { getElementById: element },
+    document: { getElementById: element, querySelectorAll: () => [] },
     pdfjsLib: { GlobalWorkerOptions: {} },
     isAuthConfigured: () => true,
     getCurrentUser: async () => null,

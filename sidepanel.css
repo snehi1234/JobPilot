@@ -203,6 +203,9 @@ textarea:focus {
 .resume-row button.del { color: #b91c1c; }
 .resume-row label { font-size: 11px; color: #374151; display: flex; align-items: center; gap: 2px; white-space: nowrap; }
 .nofile { font-size: 11px; color: #92400e; background: #fffbeb; border-radius: 6px; padding: 4px 8px; margin-top: -2px; }
+.cover-options { display: flex; flex-direction: column; gap: 6px; font-size: 12px; margin: 6px 0 8px; }
+.cover-options label { display: flex; gap: 6px; align-items: flex-start; line-height: 1.35; cursor: pointer; }
+.cover-options input { margin-top: 2px; }
 .match-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13px; }
 .match-bar { flex: 1; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
 .match-bar span { display: block; height: 100%; background: #4a3aff; }

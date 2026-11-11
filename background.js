@@ -3,7 +3,7 @@
 
 import { BACKEND_URL } from "./config.js";
 import { getIdToken, signIn } from "./auth.js";
-import { resolveLocally, rememberAnswers, profileVersion, recordCorrection, isLongQuestion } from "./lib/answer-engine.mjs";
+import { resolveLocally, rememberAnswers, profileVersion, recordCorrection, isLongQuestion, isCoverLetterField } from "./lib/answer-engine.mjs";
 import { pickResume, companyKey, extractSkills } from "./lib/match-score.mjs";
 import { postingUrlCandidates, extractJobDescription } from "./lib/job-description.mjs";
 
@@ -170,6 +170,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     SAVE_TO_LIBRARY: saveToLibrary,
     REVISE_DRAFT: reviseDraft,
     GET_RESUME_FILE: getResumeFile,
+    WRITE_COVER_LETTER: writeCoverLetter,
+    SAVE_COVER_LETTER: saveCoverLetter,
+    GET_COVER_LETTER_FILE: async () => (await chrome.storage.local.get("coverLetterFile")).coverLetterFile || null,
   };
   const handler = handlers[message.type];
   if (handler) {
@@ -223,7 +226,12 @@ async function enrichJobContext(jobContext = {}, pageUrl) {
   const onPage = String(jobContext.description || "");
   const onPageSkills = extractSkills(onPage).size;
   if (!pageUrl || (onPageSkills >= 5 && onPage.length > 1500)) return jobContext;
-  const fetched = await fetchPostingDescription(pageUrl);
+  // Don't hold up filling on a slow job site; the fetch keeps going in the
+  // background and its result is reused by later requests for this page.
+  const fetched = await Promise.race([
+    fetchPostingDescription(pageUrl),
+    new Promise((resolve) => setTimeout(() => resolve(""), 2500)),
+  ]);
   const fetchedSkills = extractSkills(fetched).size;
   const better = fetchedSkills > onPageSkills || (fetchedSkills === onPageSkills && fetched.length > onPage.length);
   return better && fetched ? { ...jobContext, description: fetched } : jobContext;
@@ -291,12 +299,41 @@ async function getResumeFile({ resumeId }) {
   return resumeFiles[resumeKey(resumeId)] || null;
 }
 
+// AI cover letters are kept per job and resume, so re-filling the same
+// application (or a later step of it) reuses the letter and the user's edits.
+const coverLetterKey = ({ jobContext = {}, url = "", resumeId }) =>
+  [companyKey(jobContext, (() => { try { return new URL(url).hostname; } catch { return ""; } })(), url),
+    String(jobContext.title || "").toLowerCase().trim(), resumeKey(resumeId)].join("|");
+
+async function writeCoverLetter({ jobContext, url, resumeId, profile, structured, regenerate }) {
+  const key = coverLetterKey({ jobContext, url, resumeId });
+  const { coverLetterCache = {} } = await chrome.storage.local.get("coverLetterCache");
+  if (!regenerate && coverLetterCache[key]?.letter) return { letter: coverLetterCache[key].letter, cached: true };
+  const { letter } = await callBackendWithAuth("/api/cover-letter", { jobContext, profile, structured });
+  if (!letter) throw new Error("No cover letter was returned. Please try again.");
+  await storeCoverLetter(coverLetterCache, key, letter);
+  return { letter };
+}
+
+async function saveCoverLetter({ jobContext, url, resumeId, letter }) {
+  const { coverLetterCache = {} } = await chrome.storage.local.get("coverLetterCache");
+  await storeCoverLetter(coverLetterCache, coverLetterKey({ jobContext, url, resumeId }), String(letter || "").slice(0, 6000));
+  return { ok: true };
+}
+
+async function storeCoverLetter(cache, key, letter) {
+  const next = { ...cache, [key]: { letter, at: Date.now() } };
+  const keys = Object.keys(next).sort((a, b) => next[a].at - next[b].at);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 30))) delete next[k];
+  await chrome.storage.local.set({ coverLetterCache: next });
+}
+
 // Resolve answers locally (corrections, profile rules, remembered answers,
 // saved long answers) and only send the remaining fields to the AI. With
 // `localOnly`, return immediately with the ids still pending so the page can
 // fill known fields first. Memory and corrections are kept per resume.
 async function answerFields(message) {
-  const fields = Array.isArray(message.fields) ? message.fields : [];
+  const fields = (Array.isArray(message.fields) ? message.fields : []).filter((f) => !isCoverLetterField(f));
   const key = resumeKey(message.resumeId);
   const version = await profileVersion(message.structured, message.profile);
   const stored = await chrome.storage.local.get(["answerMemory", "answerCorrections", "answerLibrary"]);

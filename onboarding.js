@@ -50,7 +50,7 @@ async function openPanel() {
     const win = await chrome.windows.getCurrent();
     await chrome.sidePanel.open({ windowId: win.id });
   } catch (err) {
-    alert("Click the JobPilot icon in your toolbar to open the panel.");
+    alert("Click the Hiresprint icon in your toolbar to open the panel.");
   }
 }
 

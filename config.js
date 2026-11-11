@@ -1,4 +1,4 @@
-// config.js — central configuration for JobPilot.
+// config.js — central configuration for Hiresprint.
 //
 // BACKEND_URL: when set to your deployed backend (e.g.
 //   "https://jobpilot-backend.vercel.app"), the extension calls the backend and
@@ -17,6 +17,6 @@ export const BACKEND_URL = "https://backend-alpha-seven-87.vercel.app";
 //   2. Create Credentials → OAuth client ID → type "Web application"
 //   3. Under "Authorized redirect URIs" add:
 //        https://<YOUR_EXTENSION_ID>.chromiumapp.org/
-//      (find <YOUR_EXTENSION_ID> on chrome://extensions for JobPilot)
+//      (find <YOUR_EXTENSION_ID> on chrome://extensions for Hiresprint)
 //   4. Copy the client ID here.
 export const GOOGLE_CLIENT_ID = "136843611240-20qa0e8f5234di2kjth0a37mp6hihmiq.apps.googleusercontent.com";

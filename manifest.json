@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "JobPilot — AI Job Application Autofill",
-  "version": "0.3.0",
-  "description": "AI-assisted job application autofill from your profile and resume, with review tools and optional automatic filling.",
+  "name": "Hiresprint — AI Job Autofill & Resume Match",
+  "short_name": "Hiresprint",
+  "version": "0.4.0",
+  "description": "AI job application autofill with resume match scores, cover letters, and review tools. You stay in control of every submission.",
   "permissions": [
     "storage",
     "activeTab",
@@ -19,7 +20,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "JobPilot",
+    "default_title": "Hiresprint",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

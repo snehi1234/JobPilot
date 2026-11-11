@@ -1,7 +1,7 @@
-# JobPilot Backend
+# Hiresprint Backend
 
 A serverless proxy (Vercel) that holds the Groq API key and serves the
-JobPilot Chrome extension for **all users** — so end users never need their own
+Hiresprint Chrome extension for **all users** — so end users never need their own
 model key.
 
 ## Free-tier provider policy

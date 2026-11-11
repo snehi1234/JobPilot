@@ -203,7 +203,7 @@ async function readResumeFile(file) {
     }
     return { text, type: isDocx ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf" };
   } catch (err) {
-    console.error("[JobPilot] Resume import failed:", err?.stack || err?.message || err);
+    console.error("[Hiresprint] Resume import failed:", err?.stack || err?.message || err);
     if (err?.code === "PROTECTED") {
       showStatus(
         "This PDF is password/encryption protected and can't be read. Make an unprotected copy (Print → Save as PDF) or paste your resume text below.",
@@ -295,7 +295,7 @@ async function handleResumeUpload(event, replaceId = null) {
       STRUCTURED_IDS.forEach(key => { if (sfEl(key)) sfEl(key).value = merged[key] || ""; });
     } catch (err) {
       warning += ` Profile extraction failed: ${err.message}. Contact details found locally are still available.`;
-      console.error("[JobPilot] Resume profile extraction failed:", err.message);
+      console.error("[Hiresprint] Resume profile extraction failed:", err.message);
     }
   }
   const synced = await save();
@@ -390,7 +390,7 @@ function renderResumeList() {
       if (resumeFiles[row.dataset.id] || row.querySelector(".nofile")) continue;
       const warn = document.createElement("div");
       warn.className = "nofile";
-      warn.textContent = "⚠ File not saved — click Replace and pick this resume once so JobPilot can attach it to applications.";
+      warn.textContent = "⚠ File not saved — click Replace and pick this resume once so Hiresprint can attach it to applications.";
       row.after(warn);
     }
   }).catch(() => {});
@@ -413,7 +413,7 @@ async function initCoverLetter() {
     showStatus(
       radio.value === "ai" ? "Cover letters will be written for each job from your resume and the job description. Review them before submitting."
         : radio.value === "file" ? (coverLetterFile ? "Your cover letter file will be used for every job." : "Upload your cover letter file below.")
-        : "JobPilot won't add cover letters.",
+        : "Hiresprint won't add cover letters.",
       radio.value === "file" && !coverLetterFile ? "note" : "success"
     );
   }));
@@ -556,7 +556,7 @@ async function ensureContentScript(tabId) {
       await new Promise((r) => setTimeout(r, 300));
       return true;
     } catch (err) {
-      console.warn("[JobPilot] Could not inject content script:", err.message);
+      console.warn("[Hiresprint] Could not inject content script:", err.message);
       return false;
     }
   }
@@ -572,7 +572,7 @@ async function loadSaved() {
       cloud = await cloudLoad();
     } catch (err) {
       showStatus(`Cloud profile unavailable: ${err.message}. Using this device's saved profile.`, "error");
-      console.error("[JobPilot] Could not load cloud profile:", err.message);
+      console.error("[Hiresprint] Could not load cloud profile:", err.message);
     }
   }
   const local = await chrome.storage.local.get(["profile", "structured", "uploadedResumeText", "resumes", "defaultResumeId"]);
@@ -641,7 +641,7 @@ async function save() {
         })),
       });
     } catch (err) {
-      console.error("[JobPilot] Cloud sync failed:", err.message);
+      console.error("[Hiresprint] Cloud sync failed:", err.message);
       showStatus(`Saved on this device. Cloud sync failed: ${err.message}`, "error");
       return false;
     }
@@ -729,7 +729,7 @@ async function fillForm() {
       if (countResp?.counts) counts = countResp.counts;
       if (countResp?.entries) parsedEntries = countResp.entries;
     }
-    console.log("[JobPilot] Using counts:", counts, parsedEntries);
+    console.log("[Hiresprint] Using counts:", counts, parsedEntries);
 
     // Show the parsed experience list so we can SEE what the AI found.
     const expNames = (parsedEntries?.experience || [])
@@ -751,7 +751,7 @@ async function fillForm() {
 
     if (detectResponse?.busy) {
       showStatus(
-        "JobPilot is already filling this page (auto-fill just ran) — please wait a moment and try again.",
+        "Hiresprint is already filling this page (auto-fill just ran) — please wait a moment and try again.",
         "error"
       );
       els.fill.disabled = false;
@@ -805,7 +805,7 @@ async function fillForm() {
         : null;
     if (!reliableExp || !reliableEdu) {
       console.log(
-        "[JobPilot] Some parsed entries incomplete; letting fill AI use full resume for those."
+        "[Hiresprint] Some parsed entries incomplete; letting fill AI use full resume for those."
       );
     }
 
@@ -917,7 +917,7 @@ async function applyAll() {
     // Page was reloaded/changed since we detected — markers are gone.
     if (result?.stale) {
       showStatus(
-        "The page changed since scanning (did you reload?). Click ✨ Fill This Form again to re-scan, then Apply.",
+        "The page changed since scanning (did you reload?). Click ⚡ Fill This Form again to re-scan, then Apply.",
         "error"
       );
       return;
@@ -1061,7 +1061,7 @@ async function initAuth() {
 // Permanently delete the signed-in user's cloud + local profile data.
 async function deleteMyData() {
   const sure = confirm(
-    "Delete all your JobPilot data (profile, resumes, cover letter, saved answers, demographics)?\n\nThis cannot be undone."
+    "Delete all your Hiresprint data (profile, resumes, cover letter, saved answers, demographics)?\n\nThis cannot be undone."
   );
   if (!sure) return;
 
@@ -1121,7 +1121,7 @@ async function initAutoFillToggle() {
     els.autoFillToggle.disabled = false;
   } catch (err) {
     showStatus("Could not load automatic-filling preferences. Reopen the panel to try again.", "error");
-    console.error("[JobPilot] Could not load automatic-filling preferences:", err);
+    console.error("[Hiresprint] Could not load automatic-filling preferences:", err);
     return;
   }
 
@@ -1139,7 +1139,7 @@ async function initAutoFillToggle() {
     } catch (err) {
       els.autoFillToggle.checked = !enabled;
       showStatus("Could not save the automatic-filling preference. Please try again.", "error");
-      console.error("[JobPilot] Could not save automatic-filling preference:", err);
+      console.error("[Hiresprint] Could not save automatic-filling preference:", err);
     } finally {
       els.autoFillToggle.disabled = false;
     }
@@ -1232,7 +1232,7 @@ const versionLabel = document.getElementById("appVersion");
 const manifestVersion = chrome.runtime.getManifest?.()?.version;
 if (versionLabel && manifestVersion) versionLabel.textContent = `· v${manifestVersion}`;
 
-els.save.addEventListener("click", () => save().catch(err => console.error("[JobPilot] Save failed:", err.message)));
+els.save.addEventListener("click", () => save().catch(err => console.error("[Hiresprint] Save failed:", err.message)));
 els.fill.addEventListener("click", fillForm);
 els.applyAll.addEventListener("click", applyAll);
 els.resumeFile.addEventListener("change", (e) => handleResumeUpload(e));
@@ -1244,7 +1244,7 @@ els.replaceFile.addEventListener("change", (e) => {
 els.deleteData.addEventListener("click", deleteMyData);
 initFabToggle();
 initAutoFillToggle();
-initCoverLetter().catch((err) => console.error("[JobPilot] Could not load cover letter settings:", err));
+initCoverLetter().catch((err) => console.error("[Hiresprint] Could not load cover letter settings:", err));
 refreshFillAvailability();
 
 initAuth();

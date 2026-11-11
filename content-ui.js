@@ -11,13 +11,13 @@
 
 var JP_MARK_ATTR = "data-jobpilot-source";
 var JP_MARK_STYLE = {
-  profile: { color: "#16a34a", title: "Filled from your JobPilot profile" },
+  profile: { color: "#16a34a", title: "Filled from your Hiresprint profile" },
   memory: { color: "#16a34a", title: "Filled from an answer you've used before" },
   correction: { color: "#16a34a", title: "Filled with the answer you chose last time" },
   ai: { color: "#2563eb", title: "AI answer — please check it" },
   draft: { color: "#2563eb", title: "AI draft — please review and personalize" },
   library: { color: "#2563eb", title: "From your saved answers — please personalize" },
-  needs: { color: "#d97706", title: "JobPilot couldn't fill this — please complete it" },
+  needs: { color: "#d97706", title: "Hiresprint couldn't fill this — please complete it" },
 };
 var JP_SESSION_KEY = "jobpilot_session";
 var JP_SESSION_MS = 30 * 60 * 1000;
@@ -111,7 +111,7 @@ function jpUndoAll() {
   jpUndoStack = [];
   let undone = 0;
   for (const step of steps) {
-    try { step(); undone++; } catch (err) { console.warn("[JobPilot] Undo step failed:", err.message); }
+    try { step(); undone++; } catch (err) { console.warn("[Hiresprint] Undo step failed:", err.message); }
   }
   jpClearMarks();
   jpFillRecords.clear();
@@ -251,7 +251,7 @@ async function jpAttachFile(input, file, { replace = false } = {}) {
     }
     return jpUploadShowsFile(input, file.name) || input.files?.length ? "attached" : "blocked";
   } catch (err) {
-    console.warn("[JobPilot] Could not attach file:", err.message);
+    console.warn("[Hiresprint] Could not attach file:", err.message);
     return "blocked";
   }
 }
@@ -515,7 +515,7 @@ function jpRenderChecklist() {
     : "";
   const attach = {
     attached: "📎 Resume file attached",
-    unavailable: "📎 Your resume file isn't saved in JobPilot yet. Attach it here, or open JobPilot → Your Resumes → Replace once to attach it automatically next time.",
+    unavailable: "📎 Your resume file isn't saved in Hiresprint yet. Attach it here, or open Hiresprint → Your Resumes → Replace once to attach it automatically next time.",
     blocked: "📎 This site blocked automatic upload — attach your resume manually",
     none: "",
   }[state.attach || "none"];
@@ -524,8 +524,8 @@ function jpRenderChecklist() {
     writing: "📝 Writing a cover letter for this job…",
     added: `📝 Cover letter ${cover.how === "pasted" ? "pasted" : "attached"} (${cover.mode === "ai" ? "AI-written for this job — review it" : "your file"})`,
     blocked: "📝 This site blocked the cover letter upload — attach it manually",
-    off: "📝 This job asks for a cover letter. To add one automatically, choose AI-written or your own file under Cover letter in JobPilot.",
-    missing: "📝 Upload your cover letter file in JobPilot (Cover letter section) to add it automatically.",
+    off: "📝 This job asks for a cover letter. To add one automatically, choose AI-written or your own file under Cover letter in Hiresprint.",
+    missing: "📝 Upload your cover letter file in Hiresprint (Cover letter section) to add it automatically.",
     "missing-text": "📝 This job wants the cover letter as text, but your file's text couldn't be read. Paste it yourself.",
     error: `📝 Couldn't write a cover letter: ${cover.message || "please try again."}`,
   }[cover.status] || "");
@@ -549,8 +549,8 @@ function jpRenderChecklist() {
       .btn { flex: 1; border: none; border-radius: 8px; padding: 8px; font-weight: 600; cursor: pointer; }
       .undo { background: #e2e8f0; color: #1a1a2e; } .done { background: #4a3aff; color: #fff; }
     </style>
-    <div class="panel" role="dialog" aria-label="JobPilot autofill checklist">
-      <div class="head"><span>✨ JobPilot · Filled ${records.length} field${records.length === 1 ? "" : "s"}</span>
+    <div class="panel" role="dialog" aria-label="Hiresprint autofill checklist">
+      <div class="head"><span>⚡ Hiresprint · Filled ${records.length} field${records.length === 1 ? "" : "s"}</span>
         <button class="close" aria-label="Close">×</button></div>
       ${resume?.name ? `<div class="resume">Resume: <b>${jpEscape(resume.name)}</b>${jpEscape(scoreText)}${
         resume.scores?.length > 1 ? `

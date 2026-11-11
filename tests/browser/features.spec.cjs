@@ -33,6 +33,9 @@ const PAGE = `<!doctype html><html><head><title>Acme - Data Engineer</title></he
 
 async function setup(app, { resumes = true } = {}) {
   const { context, worker, api } = app;
+  // Unknown pages on the fake job site answer 404 at once, like a real site,
+  // instead of waiting on a DNS failure. Later, more specific routes win.
+  await context.route("https://careers.acme.test/**", (route) => route.fulfill({ status: 404, body: "Not found" }));
   await context.route(JOB_URL, (route) => route.fulfill({ contentType: "text/html", body: PAGE }));
   await worker.evaluate(async ({ details, software, data, withResumes }) => {
     const pdf = btoa("%PDF-1.4 synthetic");
@@ -308,7 +311,17 @@ async function openCoverPage(app, url, coverField, settings) {
   await page.goto(url);
   await expect(page.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
   await autofill(page);
-  await expect(page.locator("#fn")).toHaveValue("Alex", { timeout: 10000 });
+  try {
+    await expect(page.locator("#fn")).toHaveValue("Alex", { timeout: 10000 });
+  } catch (error) {
+    console.log("DIAG", JSON.stringify({
+      toast: await page.locator("#jobpilot-toast").textContent().catch(() => null),
+      fab: await page.locator("#jobpilot-fab").count(),
+      calls: app.api.calls.map((c) => c.endpoint),
+      errors: app.api.errors,
+    }));
+    throw error;
+  }
   await expect(checklist(page)).toBeAttached({ timeout: 15000 });
   return page;
 }

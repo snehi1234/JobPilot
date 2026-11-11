@@ -76,7 +76,7 @@ async function backendHeaders(forceRefresh = false) {
 // "session expired" prompts caused by a stale/near-expiry cached token.
 async function callBackendWithAuth(path, body) {
   if (!BACKEND_URL) {
-    throw new Error("JobPilot backend is not configured. AI requests are disabled.");
+    throw new Error("Hiresprint backend is not configured. AI requests are disabled.");
   }
   let res = await fetch(`${BACKEND_URL}${path}`, {
     method: "POST",

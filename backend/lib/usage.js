@@ -1,6 +1,6 @@
 // lib/usage.js — per-user daily and monthly AI-request caps, backed by Supabase.
 //
-// Every JobPilot user shares one Groq Free-plan organization (per model:
+// Every Hiresprint user shares one Groq Free-plan organization (per model:
 // 30 requests/min, 1K requests/day, 8K tokens/min, 200K tokens/day). These
 // caps stop any single user from exhausting that shared budget. The extension
 // answers most fields locally (profile rules + remembered answers), so a

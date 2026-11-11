@@ -1,6 +1,6 @@
-# JobPilot — Deployment & Setup Guide
+# Hiresprint — Deployment & Setup Guide
 
-This guide covers the two things needed to run JobPilot for real users:
+This guide covers the two things needed to run Hiresprint for real users:
 **(1) install Node + deploy the backend**, and **(2) configure Google Sign-In**.
 
 For Chrome Web Store release 0.1.2, the draft extension ID is

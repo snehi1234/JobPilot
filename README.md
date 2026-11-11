@@ -1,11 +1,11 @@
-# JobPilot — AI Job Application Autofill
+# Hiresprint — AI Job Application Autofill
 
-JobPilot is a Chrome extension that uses an LLM to fill out online job applications from your profile and resume. It reads each form's fields, generates answers grounded in your resume and the job description, and writes them into the page. The page can be built with React, shadow DOM, or custom dropdowns.
+Hiresprint is a Chrome extension that uses an LLM to fill out online job applications from your profile and resume. It reads each form's fields, generates answers grounded in your resume and the job description, and writes them into the page. The page can be built with React, shadow DOM, or custom dropdowns.
 
 > **Status:** Version 0.1.2 is submitted to the Chrome Web Store and pending review.
 > Store link (active once published): https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep
 
-![JobPilot onboarding](store-assets/onboarding-1280x800.png)
+![Hiresprint onboarding](store-assets/hiresprint-onboarding-1280x800.png)
 
 ## Features
 
@@ -23,7 +23,7 @@ JobPilot is a Chrome extension that uses an LLM to fill out online job applicati
 - **Resume parsing in the browser.** PDF (pdf.js) and DOCX (JSZip) files are parsed locally. The extension detects protected and scanned PDFs.
 - **Several resumes, matched per job.** Keep up to five resumes. An on-device matcher scores each one against the job description (named skills plus the description's key terms), picks the best, and asks only when two are close. Application pages often show only the form, so the description is read from the job's posting page (JSON-LD, Next.js data, or Ashby app data); without a description, no score is shown. A manual choice is remembered per company. The original file stays in the browser and is attached to the application's resume field.
 - **Review on the page.** Filled fields are outlined by source (green: profile or saved answers, blue: AI, amber: needs you). A checklist links to every field to review, and **Undo all** restores the page exactly.
-- **Learns from corrections.** When you change a filled answer, JobPilot reuses your version next time instead of asking the AI. Answers are remembered per resume.
+- **Learns from corrections.** When you change a filled answer, Hiresprint reuses your version next time instead of asking the AI. Answers are remembered per resume.
 - **Long answers.** AI drafts for "Why us?" style questions can be made shorter or longer, and saved to a personal answer library that is reused on similar questions.
 - **Cover letters.** Choose in the panel: an AI-written letter for each job (about 250 words from the resume picked for that job and the job description), your own file for every job, or none. Text boxes get the letter pasted in; upload fields get the file, or a PDF generated in the browser. The checklist has an **Edit** button, and AI letters are cached per job and resume.
 - **Multi-step forms.** After a fill, new fields that appear on the next step (or the next page within 30 minutes) trigger a "Fill this step" prompt.

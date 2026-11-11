@@ -1,4 +1,4 @@
-# JobPilot — Chrome Web Store Listing (Draft)
+# Hiresprint — Chrome Web Store Listing (Draft)
 
 Use this content when filling out the Chrome Web Store Developer Dashboard
 listing form. Copy/paste each section into its matching field.
@@ -8,10 +8,10 @@ listing form. Copy/paste each section into its matching field.
 ## Store listing
 
 ### Extension name
-JobPilot — AI Job Application Autofill
+Hiresprint — AI Job Autofill & Resume Match
 
 ### Short description (max 132 characters)
-AI-assisted job application autofill from your profile and resume, with review tools and optional automatic filling.
+AI job application autofill with resume match scores, cover letters, and review tools. You stay in control of every submission.
 
 ### Category
 Productivity > Workflow & Planning
@@ -23,7 +23,7 @@ English (United States)
 
 ## Detailed description
 
-JobPilot uses AI to suggest and fill answers on job application forms from
+Hiresprint uses AI to suggest and fill answers on job application forms from
 your saved profile and resume. Review every completed application: AI can
 make mistakes.
 
@@ -31,7 +31,7 @@ make mistakes.
 1. Sign in with Google and set up your profile once (contact details, work
    authorization, optional demographics) and upload up to five resumes (PDF or
    Word), e.g. one for software roles and one for data roles.
-2. Open a job application. JobPilot detects common application pages, including
+2. Open a job application. Hiresprint detects common application pages, including
    Greenhouse, Lever, Ashby, Workday, and others. Compatibility varies by site;
    some custom fields and multi-step forms may need manual entry.
 3. Use "Fill This Form" in the side panel to generate suggestions, edit them,
@@ -40,13 +40,13 @@ make mistakes.
 4. Optionally enable automatic filling in the side panel after reading its
    disclosure. It is OFF by default. When enabled, recognized job pages can
    be processed and filled on load without another click or prior review.
-5. JobPilot picks the resume that best matches the job, attaches it, and
+5. Hiresprint picks the resume that best matches the job, attaches it, and
    shows a checklist: green fields came from your profile, blue fields are AI
    answers to review, amber fields need you. Undo everything with one click.
-6. On multi-step applications, JobPilot offers to fill each new step.
+6. On multi-step applications, Hiresprint offers to fill each new step.
 7. Review the filled application and submit it yourself.
 
-**Why JobPilot:**
+**Why Hiresprint:**
 • Uses profile and job context to suggest answers
 • Handles common text fields, dropdowns, and repeated work/education sections
 • Match score for each of your resumes against the job description
@@ -59,8 +59,8 @@ make mistakes.
 • Free to use, with a fair monthly usage limit
 
 **Your privacy:**
-JobPilot checks page structure on your device to recognize job applications.
-Your saved details and resume are stored securely in your JobPilot account.
+Hiresprint checks page structure on your device to recognize job applications.
+Your saved details and resume are stored securely in your Hiresprint account.
 When you autofill, the relevant details and the form's questions are processed
 by our AI service to generate answers. Automatic filling is off by default and
 can be turned off anytime. You can delete your saved profile from the side panel.
@@ -76,13 +76,13 @@ Support and privacy requests: snehithbootla1@gmail.com
 (Required in the "Privacy practices" tab of the dashboard)
 
 ### Single purpose description
-JobPilot's single purpose is to help users autofill online job application
+Hiresprint's single purpose is to help users autofill online job application
 forms using AI, based on a profile and resume the user provides.
 
 ### Permission justifications
 
 **Host permission: `<all_urls>`**
-JobPilot needs to read form fields and job details on whatever career site
+Hiresprint needs to read form fields and job details on whatever career site
 page the user is currently applying on, and write the AI-generated answers
 back into that page. Since job applications are hosted on thousands of
 different company domains and ATS platforms (Greenhouse, Lever, Workday,
@@ -109,11 +109,11 @@ in the browser.
 
 **unlimitedStorage**
 Users can keep up to five resumes. The original PDF/Word files are kept only
-in the browser so JobPilot can attach the matching file to applications;
+in the browser so Hiresprint can attach the matching file to applications;
 together they can exceed the default local storage quota.
 
 **sidePanel**
-Used to show JobPilot's main UI (profile setup, resume upload, sign-in,
+Used to show Hiresprint's main UI (profile setup, resume upload, sign-in,
 review of suggested answers) in Chrome's side panel.
 
 **identity**
@@ -137,8 +137,8 @@ autofill, and quota enforcement. Data is not sold or used for advertising.
 Automatic processing is off by default and requires the separate in-product
 opt-in described above.
 
-Data is transmitted over HTTPS to JobPilot's servers and to a third-party AI
-service provider that generates answers on JobPilot's behalf.
+Data is transmitted over HTTPS to Hiresprint's servers and to a third-party AI
+service provider that generates answers on Hiresprint's behalf.
 
 ---
 

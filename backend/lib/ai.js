@@ -138,7 +138,7 @@ async function callGroq(prompt, { maxOutputTokens, temperature }) {
 }
 
 // Shown to users for any non-rate-limit AI failure; details go to server logs.
-export const AI_UNAVAILABLE = "JobPilot's AI service is temporarily unavailable. Please try again in a moment.";
+export const AI_UNAVAILABLE = "Hiresprint's AI service is temporarily unavailable. Please try again in a moment.";
 
 export async function callAI(prompt, generationConfig = {}) {
   try {
@@ -146,7 +146,7 @@ export async function callAI(prompt, generationConfig = {}) {
   } catch (err) {
     if (err.status === 429) {
       const limited = new Error(
-        "JobPilot's AI service is busy right now. Please wait about a minute and try again."
+        "Hiresprint's AI service is busy right now. Please wait about a minute and try again."
       );
       limited.status = 429;
       throw limited;

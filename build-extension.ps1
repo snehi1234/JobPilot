@@ -1,4 +1,4 @@
-# build-extension.ps1 — packages JobPilot into a clean zip for the Chrome Web
+# build-extension.ps1 — packages Hiresprint into a clean zip for the Chrome Web
 # Store, including only the files the extension actually needs at runtime and
 # excluding dev-only files (backend/, icons/node_modules, source .svg, etc).
 #

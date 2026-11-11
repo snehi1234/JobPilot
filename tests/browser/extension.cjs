@@ -28,7 +28,7 @@ const test = base.extend({
     context.on("page", page => {
       page.on("pageerror", error => api.errors.push(error.message));
       page.on("console", message => {
-        if (["error", "warning"].includes(message.type()) && message.text().includes("[JobPilot]")) api.errors.push(message.text());
+        if (["error", "warning"].includes(message.type()) && message.text().includes("[Hiresprint]")) api.errors.push(message.text());
       });
     });
     await context.route(`${backend}/**`, async (route) => {
@@ -94,6 +94,9 @@ const test = base.extend({
     const panel = await context.newPage();
     await panel.goto(`chrome-extension://${id}/sidepanel.html`);
     await expect(panel.locator("#appContent")).toBeVisible();
+    // The panel's first load writes the loaded profile back to storage; wait
+    // for it so it can't overwrite data a test seeds afterwards.
+    await expect.poll(() => worker.evaluate(async () => "structured" in await chrome.storage.local.get("structured")), { timeout: 15000 }).toBe(true);
     try {
       await use({ context, worker, panel, api, id });
     } finally {

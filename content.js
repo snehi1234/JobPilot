@@ -32,7 +32,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Bail out early in frames that can't plausibly be a real application form —
 // this matters a lot now that the content script runs in every iframe
 // (all_frames: true, needed since some ATS load their form in an iframe).
-// Without this guard, JobPilot would run its full detection/polling logic in
+// Without this guard, Hiresprint would run its full detection/polling logic in
 // every tiny/hidden ad, tracking, and widget iframe on every page, which can
 // spike CPU/memory heavily across many open tabs. Skip frames that are too
 // small to contain a real form.
@@ -48,13 +48,13 @@ if (window !== window.top) {
   const w = window.innerWidth;
   const h = window.innerHeight;
   if (w < JP_MIN_FRAME_SIZE || h < JP_MIN_FRAME_SIZE) {
-    console.log(`[JobPilot] Skipping tiny iframe (${w}x${h}) — likely an ad/widget, not a form.`);
+    console.log(`[Hiresprint] Skipping tiny iframe (${w}x${h}) — likely an ad/widget, not a form.`);
     jpSkipFrame = true;
   }
 }
 
 console.log(
-  `[JobPilot] content script loaded — frame=${window === window.top ? "top" : "iframe"} url=${location.href}`
+  `[Hiresprint] content script loaded — frame=${window === window.top ? "top" : "iframe"} url=${location.href}`
 );
 
 // ---------- Shadow DOM support ----------
@@ -204,7 +204,7 @@ function groupQuestion(members) {
 
 function isVisible(el) {
   if (el.disabled) return false;
-  // Never treat JobPilot's own injected UI (the floating Autofill button,
+  // Never treat Hiresprint's own injected UI (the floating Autofill button,
   // its shadow-DOM contents, or the status toast) as a form field — the
   // shadow-DOM-piercing scanner would otherwise pick up our own button/close
   // button as if they were real fields on the page.
@@ -965,7 +965,7 @@ function jpResolveField(id, meta) {
   el = jpFindByLabelFallback(meta);
   if (el) {
     el.setAttribute(FIELD_ATTR, id); // re-tag so future lookups are direct
-    console.log(`[JobPilot] Re-located "${meta.label}" via label fallback (attribute was lost).`);
+    console.log(`[Hiresprint] Re-located "${meta.label}" via label fallback (attribute was lost).`);
   }
   return el;
 }
@@ -975,7 +975,7 @@ async function applyAnswers(suggestions) {
   // so our field markers are gone. Signal the panel to re-run detection.
   const registryEmpty = Object.keys(fieldRegistry).length === 0;
   if (registryEmpty) {
-    console.warn("[JobPilot] Apply called but no tagged fields — page likely reloaded.");
+    console.warn("[Hiresprint] Apply called but no tagged fields — page likely reloaded.");
     return { filled: 0, stale: true };
   }
 
@@ -1041,7 +1041,7 @@ async function applyAnswers(suggestions) {
       failed.push({ id, label, reason: err.message });
       const el = meta && meta.kind !== "radio" && meta.kind !== "buttongroup" ? jpResolveField(id, meta) : null;
       if (el) jpMark(el, "needs");
-      console.warn(`[JobPilot] Could not fill "${label}": ${err.message}`);
+      console.warn(`[Hiresprint] Could not fill "${label}": ${err.message}`);
     }
     // Brief pause between fields so a re-render triggered by this fill
     // (common on React-based forms) settles before we look up the next
@@ -1264,7 +1264,7 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
 
   const allFound = findAddButtons();
   console.log(
-    "[JobPilot] Add-buttons found:",
+    "[Hiresprint] Add-buttons found:",
     allFound.map((b) => ({
       text: (b.innerText || b.textContent || "").trim(),
       category: categorize(b),
@@ -1298,7 +1298,7 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
     other: 0,
   };
   console.log(
-    `[JobPilot] Expansion targets → experience: ${wantedTotal.experience}, education: ${wantedTotal.education}`,
+    `[Hiresprint] Expansion targets → experience: ${wantedTotal.experience}, education: ${wantedTotal.education}`,
     "(received counts:", counts, ")"
   );
 
@@ -1315,7 +1315,7 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
       const buttons = findAddButtons();
       const btn = buttons.find((b) => categorize(b) === cat);
       if (!btn) {
-        console.log(`[JobPilot] No "Add" button for ${cat}; stopping (existing=${existing}).`);
+        console.log(`[Hiresprint] No "Add" button for ${cat}; stopping (existing=${existing}).`);
         break;
       }
 
@@ -1336,12 +1336,12 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
             break;
           }
         }
-        if (!added) console.log(`[JobPilot] Retry ${attempt + 1} for "Add ${cat}"…`);
+        if (!added) console.log(`[Hiresprint] Retry ${attempt + 1} for "Add ${cat}"…`);
       }
 
       const nowRows = countExistingGroups()[cat] || 0;
       console.log(
-        `[JobPilot] Add ${cat}: rows ${beforeRows} → ${nowRows} (target ${wantedTotal[cat]})`
+        `[Hiresprint] Add ${cat}: rows ${beforeRows} → ${nowRows} (target ${wantedTotal[cat]})`
       );
       if (added) {
         expanded++;
@@ -1357,7 +1357,7 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
         const entry = entryList[entryIndex];
         if (modal && entry) {
           console.log(
-            `[JobPilot] "${cat}" Add button opened a modal dialog — filling entry #${entryIndex + 1} directly:`,
+            `[Hiresprint] "${cat}" Add button opened a modal dialog — filling entry #${entryIndex + 1} directly:`,
             entry
           );
           const filledInModal = await fillModalFromEntry(modal, entry, cat);
@@ -1367,7 +1367,7 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
             await sleep(700);
           }
           console.log(
-            `[JobPilot] Modal fill for "${cat}" entry #${entryIndex + 1}: ${filledInModal} field(s) set, saveButton=${Boolean(saveBtn)}`
+            `[Hiresprint] Modal fill for "${cat}" entry #${entryIndex + 1}: ${filledInModal} field(s) set, saveButton=${Boolean(saveBtn)}`
           );
           if (filledInModal > 0) {
             modalCommitted[cat] = entryIndex + 1;
@@ -1376,7 +1376,7 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
           }
         } else if (modal && !entry) {
           console.log(
-            `[JobPilot] "${cat}" modal opened but no more parsed entries to fill it with (have ${entryList.length}).`
+            `[Hiresprint] "${cat}" modal opened but no more parsed entries to fill it with (have ${entryList.length}).`
           );
         } else {
           // Diagnostic: nothing matched at all — log what candidates DID
@@ -1387,7 +1387,7 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
             (el) => !beforeSnapshot.has(el) && isVisible(el)
           );
           console.warn(
-            `[JobPilot] No modal detected for "${cat}". New visible elements after click: ${newVisible.length}`,
+            `[Hiresprint] No modal detected for "${cat}". New visible elements after click: ${newVisible.length}`,
             newVisible.slice(0, 5).map((el) => ({
               tag: el.tagName,
               class: el.className,
@@ -1395,14 +1395,14 @@ async function expandRepeatableSections(counts = {}, parsedEntries = null) {
             }))
           );
         }
-        console.warn(`[JobPilot] "Add ${cat}" did not add a row after retries; stopping.`);
+        console.warn(`[Hiresprint] "Add ${cat}" did not add a row after retries; stopping.`);
         break;
       }
     }
   }
 
   if (expanded > 0) await sleep(400); // let the last section finish rendering
-  console.log("[JobPilot] Expansion done. New rows added:", expanded);
+  console.log("[Hiresprint] Expansion done. New rows added:", expanded);
   return expanded;
 }
 
@@ -1421,7 +1421,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // AI suggestions to land on the wrong fields once applied. The side
     // panel surfaces this rejection as a "please wait" message.
     if (jpAutofillInProgress) {
-      console.log("[JobPilot] DETECT_FIELDS rejected — an autofill run is already in progress.");
+      console.log("[Hiresprint] DETECT_FIELDS rejected — an autofill run is already in progress.");
       sendResponse({ fields: [], jobContext: {}, busy: true });
       return false;
     }
@@ -1443,12 +1443,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const fields = detectFields();
       const jobContext = scrapeJobContext();
       const { frameId } = await chrome.runtime.sendMessage({ type: "FRAME_INFO" });
-      console.log(`[JobPilot] Expanded ${expanded} section(s).`);
-      console.log(`[JobPilot] Detected ${fields.length} fields:`, fields);
+      console.log(`[Hiresprint] Expanded ${expanded} section(s).`);
+      console.log(`[Hiresprint] Detected ${fields.length} fields:`, fields);
       sendResponse({ fields, jobContext, scanId: fieldScanId, frameId });
     }).catch(err => {
       jpAutofillInProgress = false;
-      console.error("[JobPilot] Field detection failed:", err.message);
+      console.error("[Hiresprint] Field detection failed:", err.message);
       sendResponse({ error: `Could not read the form: ${err.message}` });
     });
     return true; // async response
@@ -1459,7 +1459,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     applyAnswers(message.suggestions || []).then(async (result) => {
-      console.log(`[JobPilot] Filled ${result.filled} fields. stale=${result.stale}`);
+      console.log(`[Hiresprint] Filled ${result.filled} fields. stale=${result.stale}`);
       jpAutofillInProgress = false; // release the lock taken in DETECT_FIELDS
       if (!result.stale && message.resume) {
         jpCurrentResume = message.resume;
@@ -1470,7 +1470,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse(result);
     }).catch(err => {
       jpAutofillInProgress = false;
-      console.error("[JobPilot] Applying answers failed:", err.message);
+      console.error("[Hiresprint] Applying answers failed:", err.message);
       sendResponse({ error: err.message });
     });
     return true; // async response
@@ -1677,7 +1677,7 @@ async function checkAutofillConsent(isAuto) {
 
 async function runAutofillFromButton(isAuto = false) {
   if (jpAutofillInProgress) {
-    console.log("[JobPilot] Autofill already in progress — ignoring duplicate trigger.");
+    console.log("[Hiresprint] Autofill already in progress — ignoring duplicate trigger.");
     if (!isAuto) jpToast("Already filling — please wait…", "info");
     return;
   }
@@ -1716,8 +1716,8 @@ async function runAutofillFromButton(isAuto = false) {
     if (!signedIn || (!profile && !hasResume && !hasStructured)) {
       await openPanelOrToast(
         signedIn
-          ? "Opening JobPilot — add your profile to autofill."
-          : "Opening JobPilot — please sign in to autofill."
+          ? "Opening Hiresprint — add your profile to autofill."
+          : "Opening Hiresprint — please sign in to autofill."
       );
       return;
     }
@@ -1746,12 +1746,12 @@ async function runAutofillFromButton(isAuto = false) {
       if (countResp?.counts) counts = countResp.counts;
       if (countResp?.entries) parsedEntries = countResp.entries;
     }
-    console.log("[JobPilot] Resume parse — counts:", counts);
+    console.log("[Hiresprint] Resume parse — counts:", counts);
 
     if (!(await checkAutofillConsent(isAuto))) return;
     jpToast("🔍 Scanning the form fields…", "info");
     const expanded = await expandRepeatableSections(counts, parsedEntries);
-    console.log(`[JobPilot] expandRepeatableSections added ${expanded} new row(s) for targets:`, counts);
+    console.log(`[Hiresprint] expandRepeatableSections added ${expanded} new row(s) for targets:`, counts);
     let fields = detectFields();
     // The form may still be rendering (the button appears as soon as a job
     // site is recognized), so wait briefly for fields before giving up.
@@ -1761,7 +1761,7 @@ async function runAutofillFromButton(isAuto = false) {
     }
     if (fields.length) jpOpenedApplyForm = false;
     console.log(
-      `[JobPilot] Detected ${fields.length} fillable field(s):`,
+      `[Hiresprint] Detected ${fields.length} fillable field(s):`,
       fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))
     );
     const jobContext = scrapeJobContext();
@@ -1863,21 +1863,21 @@ async function runAutofillFromButton(isAuto = false) {
       }
     }
 
-    console.log(`[JobPilot] Fill result — filled: ${total.filled}, needs input: ${total.failed.length}`);
+    console.log(`[Hiresprint] Fill result — filled: ${total.filled}, needs input: ${total.failed.length}`);
     if (!total.filled) {
       throw new Error("No fields were filled. " + total.failed.map(item => `${item.label}: ${item.reason}`).join("; "));
     }
     jpToast(fillSummary(total.filled, total.failed), total.failed.length ? "note" : "success");
     await jpFinishAutofill(pick, total.failed);
   } catch (err) {
-    console.error("[JobPilot] Autofill failed:", err);
+    console.error("[Hiresprint] Autofill failed:", err);
     // Happens when the extension was reloaded/updated while this page was
     // already open — the old content script is disconnected from the new
     // extension instance. Refreshing the page fixes it (a fresh page load
     // gets a fresh, valid content script). We can't reconnect ourselves or
     // open the side panel here since the messaging channel itself is dead.
     if (/extension context invalidated/i.test(err?.message || "")) {
-      jpToast("JobPilot was updated — please refresh this page and try again.", "error");
+      jpToast("Hiresprint was updated — please refresh this page and try again.", "error");
       return;
     }
     await openPanelOrToast(`Autofill failed: ${err.message}`);
@@ -1885,7 +1885,7 @@ async function runAutofillFromButton(isAuto = false) {
     jpAutofillInProgress = false;
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "✨ Autofill";
+      btn.textContent = "⚡ Autofill";
     }
   }
 }
@@ -1952,7 +1952,7 @@ function injectFab() {
   const btn = document.createElement("button");
   btn.id = "jobpilot-fab-btn";
   btn.type = "button";
-  btn.textContent = "✨ Autofill";
+  btn.textContent = "⚡ Autofill";
   Object.assign(btn.style, {
     display: "block",
     padding: "12px 18px",
@@ -1975,7 +1975,7 @@ function injectFab() {
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.textContent = "×";
-  closeBtn.title = "Hide on this page (turn it off everywhere from the JobPilot panel)";
+  closeBtn.title = "Hide on this page (turn it off everywhere from the Hiresprint panel)";
   Object.assign(closeBtn.style, {
     position: "absolute",
     top: "-8px",
@@ -2003,7 +2003,7 @@ function injectFab() {
   shadow.appendChild(wrap);
   document.documentElement.appendChild(host);
   jpKeepFabOnScreen(host);
-  console.log("[JobPilot] Floating Autofill button injected.");
+  console.log("[Hiresprint] Floating Autofill button injected.");
 
   // ---- Drag to move (pointer events cover mouse + touch) ----
   let dragStartX = 0;
@@ -2147,7 +2147,7 @@ async function maybeAutoFill() {
     jpAutoRunAttempted = true;
     await runAutofillFromButton(true);
   } catch (err) {
-    console.error("[JobPilot] Could not start automatic filling:", err);
+    console.error("[Hiresprint] Could not start automatic filling:", err);
   }
 }
 
@@ -2205,7 +2205,7 @@ function maybeShowFab() {
       // Continuing a multi-page application after a full page load.
       if (jpLoadSession()) {
         const btn = jpFabButton();
-        if (btn && !jpAutofillInProgress) btn.textContent = "✨ Continue autofill";
+        if (btn && !jpAutofillInProgress) btn.textContent = "⚡ Continue autofill";
         jpWatchForNextStep();
         setTimeout(jpCheckNextStep, 1500);
       }

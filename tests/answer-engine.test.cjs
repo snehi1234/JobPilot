@@ -148,3 +148,17 @@ test("cover-letter questions are never answered as ordinary questions", async ()
   assert.equal(isCoverLetterField(f(4, "Cover letter", "combobox")), false);
   assert.equal(isCoverLetterField(f(5, "Why do you want to work here?")), false);
 });
+
+test("the old product name never appears in anything users see", () => {
+  const fs = require("node:fs");
+  const root = path.join(__dirname, "..");
+  const files = ["manifest.json", "sidepanel.html", "sidepanel.js", "onboarding.html", "onboarding.js", "privacy.html", "terms.html",
+    "content.js", "content-ui.js", "background.js", "auth.js", "cloud.js", "STORE_LISTING.md",
+    "backend/public/index.html", "backend/public/privacy.html", "backend/public/terms.html", "backend/lib/ai.js"];
+  for (const file of files) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, file), "utf8"), /JobPilot|Job Pilot/, file);
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+  assert.match(manifest.name, /^Hiresprint/);
+  assert.ok(manifest.name.length <= 75 && manifest.short_name.length <= 12 && manifest.description.length <= 132);
+});

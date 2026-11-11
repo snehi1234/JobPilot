@@ -1745,10 +1745,11 @@ async function runAutofillFromButton(isAuto = false) {
     let fields = detectFields();
     // The form may still be rendering (the button appears as soon as a job
     // site is recognized), so wait briefly for fields before giving up.
-    for (let waited = 0; fields.length === 0 && waited < 6000; waited += 500) {
+    for (let waited = 0; fields.length === 0 && waited < 6000 && !(jpFindApplyControl() && !jpFormVisible()); waited += 500) {
       await sleep(500);
       fields = detectFields();
     }
+    if (fields.length) jpOpenedApplyForm = false;
     console.log(
       `[JobPilot] Detected ${fields.length} fillable field(s):`,
       fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))
@@ -1758,7 +1759,23 @@ async function runAutofillFromButton(isAuto = false) {
     // form) gives the AI the real job requirements.
     if (pick?.jobContext?.description) jobContext.description = pick.jobContext.description;
     if (fields.length === 0) {
-      jpToast("No fillable fields found on this page.", "error");
+      // Job boards often open on an overview page with the form behind an
+      // "Apply" button or "Application" tab (e.g. Ashby links from LinkedIn).
+      const apply = !isAuto && !jpOpenedApplyForm ? jpFindApplyControl() : null;
+      if (apply) {
+        jpOpenedApplyForm = true;
+        jpToast("Opening the application form…", "info");
+        // If the link loads a new page, finish there (see maybeShowFab).
+        try { sessionStorage.setItem(JP_PENDING_KEY, String(Date.now())); } catch { /* storage blocked */ }
+        apply.click();
+        for (let waited = 0; waited < 10000 && !jpFormVisible(); waited += 500) await sleep(500);
+        if (jpFormVisible()) {
+          try { sessionStorage.removeItem(JP_PENDING_KEY); } catch { /* storage blocked */ }
+          setTimeout(() => runAutofillFromButton(false), 0); // after this run releases its lock
+          return;
+        }
+      }
+      jpToast("No application form found here. Open the job's application form, then click Autofill.", "note");
       return;
     }
 
@@ -2125,6 +2142,36 @@ async function maybeAutoFill() {
 }
 
 var jpPrefetchedUrl = null;
+var jpOpenedApplyForm = false;
+var JP_PENDING_KEY = "jobpilot_pending_autofill";
+
+// A visible link, button, or tab that opens the application form.
+function jpFindApplyControl() {
+  const candidates = jpQueryAll("a, button, [role='tab'], [role='button']").filter((el) => {
+    const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 40 || !isVisible(el)) return false;
+    if (!/^(apply( now| here| online)?|apply (for|to) (this|the) (job|position|role)|application|start (your )?application|i'?m interested)$/i.test(text)) return false;
+    const href = el.getAttribute("href");
+    if (el.getAttribute("aria-selected") === "true" || el.getAttribute("aria-current")) return false;
+    if (href && !href.startsWith("#")) {
+      try {
+        const target = new URL(href, location.href);
+        // Stay on the job site; LinkedIn "Easy Apply"-style links elsewhere are out of scope.
+        if (target.hostname !== location.hostname) return false;
+        // A tab linking to this page (e.g. Ashby's "Application" tab on the form itself).
+        if (target.pathname.replace(/\/+$/, "") === location.pathname.replace(/\/+$/, "")) return false;
+      } catch { return false; }
+    }
+    return true;
+  });
+  // Prefer an explicit "Apply…" control over a generic "Application" tab.
+  return candidates.find((el) => /^apply/i.test(el.textContent.trim())) || candidates[0] || null;
+}
+
+function jpFormVisible() {
+  return jpQueryAll("input:not([type='hidden']):not([type='submit']):not([type='button']), textarea, select")
+    .filter((el) => isVisible(el)).length >= 2;
+}
 
 // Check periodically (handles SPA job forms that render after load).
 function maybeShowFab() {
@@ -2132,6 +2179,15 @@ function maybeShowFab() {
   try {
     if (looksLikeJobApplication()) {
       injectFab();
+      // The user clicked Autofill on an overview page whose apply link loaded
+      // this page; finish the fill here.
+      let pendingAt = 0;
+      try { pendingAt = Number(sessionStorage.getItem(JP_PENDING_KEY)) || 0; } catch { /* storage blocked */ }
+      if (pendingAt && Date.now() - pendingAt < 60000 && !jpAutofillInProgress) {
+        try { sessionStorage.removeItem(JP_PENDING_KEY); } catch { /* storage blocked */ }
+        jpOpenedApplyForm = true;
+        setTimeout(() => runAutofillFromButton(false), 500);
+      }
       if (jpPrefetchedUrl !== location.href) {
         jpPrefetchedUrl = location.href;
         chrome.runtime.sendMessage({ type: "PREFETCH_JOB", jobContext: scrapeJobContext(), url: location.href }).catch(() => {});

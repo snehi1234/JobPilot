@@ -262,3 +262,26 @@ test("loading the scripts into an open page again (as after an update) replaces 
   await expect(job.locator("#fn")).toHaveValue("Alex", { timeout: 10000 });
   expect(errors).toEqual([]);
 });
+
+test("on a job overview page, Autofill opens the application form and fills it", async ({ app }) => {
+  const OVERVIEW = "https://careers.acme.test/jobs/789";
+  const overview = `<!doctype html><html><head><title>Acme - Engineer</title></head><body>
+    <nav><a href="/jobs/789">Overview</a> <a href="/jobs/789/application">Application</a></nav>
+    <h1>Software Engineer</h1><p>Build things.</p><a href="/jobs/789/application">Apply for this Job</a>
+    <label for="resume">Resume</label><input type="file" id="resume"></body></html>`;
+  const form = `<!doctype html><html><head><title>Acme - Engineer</title></head><body>
+    <nav><a href="/jobs/789">Overview</a> <a href="/jobs/789/application" aria-current="page">Application</a></nav>
+    <h1>Software Engineer</h1><form onsubmit="event.preventDefault()">
+    <label for="fn">First name</label><input id="fn"><label for="em">Email</label><input id="em" type="email"></form></body></html>`;
+  const job = await setup(app);
+  await job.close();
+  await app.context.route(OVERVIEW, (route) => route.fulfill({ contentType: "text/html", body: overview }));
+  await app.context.route(`${OVERVIEW}/application`, (route) => route.fulfill({ contentType: "text/html", body: form }));
+  const page = await app.context.newPage();
+  await page.goto(OVERVIEW);
+  await expect(page.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+  await autofill(page);
+  await expect(page).toHaveURL(/\/application$/, { timeout: 10000 });
+  await expect(page.locator("#fn")).toHaveValue("Alex", { timeout: 15000 });
+  await expect(page.locator("#em")).toHaveValue(profile.email);
+});

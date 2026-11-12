@@ -68,7 +68,7 @@ can be turned off anytime. You can delete your saved profile from the side panel
 Read our Privacy Policy: https://backend-alpha-seven-87.vercel.app/privacy.html
 Read our Terms of Service: https://backend-alpha-seven-87.vercel.app/terms.html
 
-Support and privacy requests: snehithbootla1@gmail.com
+Support and privacy requests: hiresprint.support@gmail.com
 
 ---
 

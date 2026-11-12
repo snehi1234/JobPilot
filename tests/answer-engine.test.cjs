@@ -162,3 +162,15 @@ test("the old product name never appears in anything users see", () => {
   assert.match(manifest.name, /^Hiresprint/);
   assert.ok(manifest.name.length <= 75 && manifest.short_name.length <= 12 && manifest.description.length <= 132);
 });
+
+test("public pages use the support address, never a personal email", () => {
+  const fs = require("node:fs");
+  const root = path.join(__dirname, "..");
+  for (const file of ["privacy.html", "terms.html", "onboarding.html", "sidepanel.html", "STORE_LISTING.md", "README.md",
+    "backend/public/index.html", "backend/public/privacy.html", "backend/public/terms.html", "backend/public/admin.html", "backend/public/admin.js"]) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, file), "utf8"), /snehithbootla1@/i, file);
+  }
+  for (const file of ["privacy.html", "backend/public/privacy.html"]) {
+    assert.match(fs.readFileSync(path.join(root, file), "utf8"), /hiresprint\.support@gmail\.com/, file);
+  }
+});

@@ -396,6 +396,75 @@ function renderResumeList() {
   }).catch(() => {});
 }
 
+// ---------- Feedback ----------
+
+// Details about the open tab: the content script reports how the last fill
+// went; otherwise just the page address (no query string) and version.
+async function feedbackDetails() {
+  const base = {
+    version: chrome.runtime.getManifest?.()?.version || "",
+    browser: (navigator.userAgent.match(/(Edg|OPR|Chrome|Firefox|Version)\/\d+/g) || []).join(" "),
+  };
+  const tab = await getActiveTab().catch(() => null);
+  if (!tab?.id || !/^https?:/.test(tab.url || "")) return base;
+  const fromPage = await chrome.tabs.sendMessage(tab.id, { type: "GET_FEEDBACK_DETAILS" }).catch(() => null);
+  if (fromPage) return { ...fromPage, ...base, ...(fromPage.version ? { version: fromPage.version } : {}) };
+  try {
+    const url = new URL(tab.url);
+    return { site: `${url.hostname}${url.pathname}`.slice(0, 200), ...base };
+  } catch {
+    return base;
+  }
+}
+
+function initFeedback() {
+  const card = document.getElementById("feedbackCard");
+  const message = document.getElementById("feedbackMessage");
+  const send = document.getElementById("feedbackSend");
+  let details = {};
+  const close = () => {
+    card.classList.add("hidden");
+    message.value = "";
+    document.getElementById("feedbackContact").checked = false;
+    document.getElementById("feedbackDetails").checked = true;
+  };
+  document.getElementById("feedbackBtn").addEventListener("click", async () => {
+    if (!card.classList.contains("hidden")) return close();
+    card.classList.remove("hidden");
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    message.focus();
+    details = await feedbackDetails();
+    document.getElementById("feedbackPreview").textContent = JSON.stringify(details, null, 2);
+  });
+  document.getElementById("feedbackCancel").addEventListener("click", close);
+  send.addEventListener("click", async () => {
+    const text = message.value.trim();
+    if (text.length < 3) return showStatus("Please describe the problem or idea.", "error");
+    const includeDetails = document.getElementById("feedbackDetails").checked;
+    send.disabled = true;
+    try {
+      const result = await chrome.runtime.sendMessage({
+        type: "SEND_FEEDBACK",
+        feedback: {
+          type: document.getElementById("feedbackType").value,
+          message: text,
+          contactOk: document.getElementById("feedbackContact").checked,
+          includeDetails,
+          details: includeDetails ? details : {},
+        },
+      });
+      if (result?.error) throw new Error(result.error);
+      close();
+      showStatus("Thanks! Your feedback was sent.", "success");
+      statusTimer = setTimeout(hideStatus, 3000);
+    } catch (err) {
+      showStatus(`Couldn't send feedback: ${err.message}`, "error");
+    } finally {
+      send.disabled = false;
+    }
+  });
+}
+
 // ---------- Cover letter ----------
 
 async function initCoverLetter() {
@@ -992,6 +1061,8 @@ function clearFormUI() {
 
 // Show the form only when signed in; otherwise show the sign-in prompt.
 function gateContent(signedIn) {
+  document.getElementById("feedbackBtn")?.classList.toggle("hidden", !signedIn);
+  if (!signedIn) document.getElementById("feedbackCard")?.classList.add("hidden");
   if (signedIn) {
     authEls.appContent.classList.remove("hidden");
     authEls.signInPrompt.classList.add("hidden");
@@ -1244,6 +1315,7 @@ els.replaceFile.addEventListener("change", (e) => {
 els.deleteData.addEventListener("click", deleteMyData);
 initFabToggle();
 initAutoFillToggle();
+initFeedback();
 initCoverLetter().catch((err) => console.error("[Hiresprint] Could not load cover letter settings:", err));
 refreshFillAvailability();
 

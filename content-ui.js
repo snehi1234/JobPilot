@@ -410,6 +410,120 @@ function jpEditCoverLetter() {
   area.focus();
 }
 
+// ---------- Feedback ----------
+
+var jpLastError = "";
+
+// Diagnostics attached to a report: the page (no query string), version, and
+// how the last fill went. Never the user's answers, resume, or profile.
+function jpFeedbackDetails() {
+  const needs = jpChecklistState?.needs || [];
+  const score = jpCurrentResume?.scores?.find((s) => s.id === jpCurrentResume.resumeId);
+  const details = {
+    site: `${location.hostname}${location.pathname}`.slice(0, 200),
+    version: chrome.runtime.getManifest?.().version || "",
+    browser: (navigator.userAgent.match(/(Edg|OPR|Chrome|Firefox|Version)\/\d+/g) || []).join(" "),
+  };
+  if (jpLastError) details.lastError = jpLastError.slice(0, 300);
+  if (jpChecklistState?.attach) details.attach = jpChecklistState.attach;
+  if (jpChecklistState?.cover?.status) details.cover = jpChecklistState.cover.status;
+  if (score) details.match = score.informative ? `${score.score}%` : "no job description";
+  if (jpFieldsById.size) {
+    details.fields = {
+      found: jpFieldsById.size,
+      filled: jpFillRecords.size,
+      needs: needs.length,
+      missing: needs.map((n) => String(n.label || "").replace(/\s+/g, " ").slice(0, 120)).filter(Boolean).slice(0, 20),
+    };
+  }
+  return details;
+}
+
+function jpOpenFeedback(type = "bug") {
+  document.getElementById("jobpilot-feedback")?.remove();
+  const details = jpFeedbackDetails();
+  const host = document.createElement("div");
+  host.id = "jobpilot-feedback";
+  Object.assign(host.style, { all: "initial", position: "fixed", inset: "0", zIndex: "2147483647" });
+  const root = host.attachShadow({ mode: "open" });
+  root.innerHTML = `
+    <style>
+      .back { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; }
+      .box { font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; color: #1a1a2e;
+        width: min(460px, 92vw); max-height: 90vh; overflow: auto; border-radius: 12px; padding: 16px; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+      h2 { font-size: 15px; margin: 0 0 10px; }
+      label { display: block; margin: 8px 0 4px; font-weight: 600; }
+      select, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 8px; }
+      textarea { height: 110px; resize: vertical; }
+      .check { display: flex; gap: 6px; align-items: flex-start; font-weight: 400; margin: 8px 0 0; }
+      details { margin: 4px 0 0 22px; color: #475569; font-size: 12px; }
+      pre { white-space: pre-wrap; word-break: break-word; background: #f8fafc; border-radius: 6px; padding: 6px 8px; margin: 4px 0 0; font-size: 11px; }
+      .note { color: #64748b; font-size: 12px; margin-top: 8px; }
+      .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; align-items: center; }
+      .status { margin-right: auto; font-size: 12px; }
+      .status.err { color: #991b1b; } .status.ok { color: #166534; }
+      button { border: none; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+      .cancel { background: #e2e8f0; } .send { background: #4a3aff; color: #fff; } .send:disabled { opacity: .6; cursor: default; }
+    </style>
+    <div class="back"><div class="box" role="dialog" aria-label="Report a problem">
+      <h2>Report a problem or share an idea</h2>
+      <label for="type">What kind of feedback?</label>
+      <select id="type">
+        <option value="bug">Something didn't work</option>
+        <option value="wrong-answer">A field got the wrong answer</option>
+        <option value="site">This job site isn't supported well</option>
+        <option value="idea">Idea or suggestion</option>
+        <option value="other">Other</option>
+      </select>
+      <label for="msg">Details</label>
+      <textarea id="msg" maxlength="2000" placeholder="What happened, and what did you expect?"></textarea>
+      <label class="check"><input type="checkbox" id="details" checked /> Include page details (recommended)</label>
+      <details><summary>See what's included</summary><pre id="preview"></pre></details>
+      <label class="check"><input type="checkbox" id="contact" /> OK to email me back about this</label>
+      <div class="note">Your answers, resume, and profile are never included.</div>
+      <div class="row"><span class="status" role="status"></span><button class="cancel" type="button">Cancel</button><button class="send" type="button">Send</button></div>
+    </div></div>`;
+  root.getElementById("type").value = type;
+  root.getElementById("preview").textContent = JSON.stringify(details, null, 2);
+  const status = root.querySelector(".status");
+  const send = root.querySelector(".send");
+  root.querySelector(".cancel").onclick = () => host.remove();
+  root.querySelector(".back").addEventListener("click", (e) => { if (e.target === e.currentTarget) host.remove(); });
+  send.onclick = async () => {
+    const message = root.getElementById("msg").value.trim();
+    if (message.length < 3) {
+      status.className = "status err";
+      status.textContent = "Please describe the problem or idea.";
+      return;
+    }
+    send.disabled = true;
+    status.className = "status";
+    status.textContent = "Sending…";
+    const includeDetails = root.getElementById("details").checked;
+    const result = await chrome.runtime.sendMessage({
+      type: "SEND_FEEDBACK",
+      feedback: {
+        type: root.getElementById("type").value,
+        message,
+        contactOk: root.getElementById("contact").checked,
+        includeDetails,
+        details: includeDetails ? details : {},
+      },
+    }).catch((err) => ({ error: err.message }));
+    if (result?.error) {
+      send.disabled = false;
+      status.className = "status err";
+      status.textContent = result.error;
+      return;
+    }
+    status.className = "status ok";
+    status.textContent = "Thanks! Your report was sent.";
+    setTimeout(() => host.remove(), 1500);
+  };
+  document.documentElement.appendChild(host);
+  root.getElementById("msg").focus();
+}
+
 // ---------- Multi-step session ----------
 
 function jpSaveSession(resume) {
@@ -567,7 +681,7 @@ function jpRenderChecklist() {
         <ul>${needs.map((n) => `<li><a data-go="${jpEscape(n.id)}">${jpEscape(short(n.label))}</a></li>`).join("")}</ul></div>` : ""}
       ${attach ? `<div class="row">${jpEscape(attach)}</div>` : ""}
       ${coverText ? `<div class="row">${jpEscape(coverText)}${state.cover?.status === "added" && jpCoverLetter?.text ? ` <button class="mini" data-cover-edit>Edit</button>` : ""}</div>` : ""}
-      <div class="row" style="color:#64748b">Review everything, then submit the application yourself.</div>
+      <div class="row" style="color:#64748b">Review everything, then submit the application yourself. <a data-feedback>Something wrong? Report it</a></div>
       <div class="actions"><button class="btn undo">Undo all</button><button class="btn done">Done</button></div>
     </div>`;
   root.querySelector(".close").onclick = jpHideChecklist;
@@ -576,6 +690,8 @@ function jpRenderChecklist() {
   root.querySelectorAll("[data-go]").forEach((a) => (a.onclick = () => jpFocusField(a.dataset.go)));
   root.querySelectorAll("[data-draft]").forEach((b) => (b.onclick = () => jpReviseDraft(b.dataset.id, b.dataset.draft, b)));
   root.querySelectorAll("[data-save]").forEach((b) => (b.onclick = () => jpSaveDraft(b.dataset.save, b)));
+  const feedbackLink = root.querySelector("[data-feedback]");
+  if (feedbackLink) feedbackLink.onclick = () => jpOpenFeedback(state.needs?.length ? "bug" : "other");
   const coverEdit = root.querySelector("[data-cover-edit]");
   if (coverEdit) coverEdit.onclick = jpEditCoverLetter;
   const pick = root.querySelector(".pick");

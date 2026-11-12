@@ -173,6 +173,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     WRITE_COVER_LETTER: writeCoverLetter,
     SAVE_COVER_LETTER: saveCoverLetter,
     GET_COVER_LETTER_FILE: async () => (await chrome.storage.local.get("coverLetterFile")).coverLetterFile || null,
+    SEND_FEEDBACK: ({ feedback }) => callBackendWithAuth("/api/feedback", {
+      type: feedback?.type,
+      message: feedback?.message,
+      contactOk: feedback?.contactOk === true,
+      includeDetails: feedback?.includeDetails !== false,
+      details: feedback?.includeDetails === false ? {} : feedback?.details,
+    }),
   };
   const handler = handlers[message.type];
   if (handler) {

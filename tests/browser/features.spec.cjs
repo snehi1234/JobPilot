@@ -384,3 +384,65 @@ test("the user's own cover letter file is attached to every job; 'Don't add' lea
   await expect.poll(() => panelText(page)).toMatch(/asks for a cover letter/);
   expect(await page.locator("#cover").evaluate((el) => el.files.length)).toBe(0);
 });
+
+// ---------- Feedback ----------
+
+test("'Report it' on the checklist sends a report with page details but no personal data", async ({ app }) => {
+  const job = await setup(app);
+  await autofill(job);
+  await expect(job.locator("#reloc")).toHaveValue("Yes", { timeout: 10000 });
+  await expect(checklist(job)).toBeAttached();
+  await checklist(job).evaluate((host) => host.shadowRoot.querySelector("[data-feedback]").click());
+  const dialog = job.locator("#jobpilot-feedback");
+  await expect(dialog).toBeAttached();
+  const preview = await dialog.evaluate((host) => host.shadowRoot.getElementById("preview").textContent);
+  expect(preview).toContain("careers.acme.test/jobs/123/apply");
+  await dialog.evaluate((host) => {
+    const r = host.shadowRoot;
+    r.getElementById("type").value = "wrong-answer";
+    r.getElementById("msg").value = "Relocation should have been No";
+    r.getElementById("contact").checked = true;
+    r.querySelector(".send").click();
+  });
+  await expect.poll(() => (app.api.feedback || []).length, { timeout: 10000 }).toBe(1);
+  const sent = app.api.feedback[0];
+  expect(sent.type).toBe("wrong-answer");
+  expect(sent.message).toBe("Relocation should have been No");
+  expect(sent.contactOk).toBe(true);
+  expect(sent.details.site).toBe("careers.acme.test/jobs/123/apply");
+  expect(sent.details.fields.found).toBeGreaterThan(3);
+  expect(sent.details.fields.filled).toBeGreaterThan(2);
+  expect(sent.details.attach).toBe("attached");
+  expect(sent.details.match).toMatch(/%$/);
+  const raw = JSON.stringify(sent);
+  for (const secret of [profile.email, profile.phone, profile.lastName, "Spark", "AI draft about pipelines"]) expect(raw).not.toContain(secret);
+  await expect(dialog).not.toBeAttached({ timeout: 5000 });
+});
+
+test("the side panel's Feedback button sends a report about the open tab, or none if details are unticked", async ({ app }) => {
+  const job = await setup(app);
+  const { panel } = app;
+  await panel.reload();
+  await expect(panel.locator("#feedbackBtn")).toBeVisible();
+  await job.bringToFront();
+  await panel.locator("#feedbackBtn").click();
+  await expect(panel.locator("#feedbackCard")).toBeVisible();
+  await expect(panel.locator("#feedbackPreview")).toContainText(/"version"/);
+  await panel.locator("#feedbackType").selectOption("idea");
+  await panel.locator("#feedbackMessage").fill("Please support Workday better");
+  await panel.locator("#feedbackDetails").uncheck();
+  await panel.locator("#feedbackSend").click();
+  await expect(panel.locator("#status")).toContainText("Thanks! Your feedback was sent.");
+  await expect(panel.locator("#feedbackCard")).toBeHidden();
+  const sent = app.api.feedback.at(-1);
+  expect(sent.type).toBe("idea");
+  expect(sent.includeDetails).toBe(false);
+  expect(JSON.stringify(sent.details)).toBe("{}");
+  expect(sent.contactOk).toBe(false);
+
+  // An empty message is rejected without contacting the server.
+  await panel.locator("#feedbackBtn").click();
+  await panel.locator("#feedbackSend").click();
+  await expect(panel.locator("#status")).toContainText("Please describe");
+  expect(app.api.feedback.length).toBe(1);
+});

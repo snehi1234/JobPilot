@@ -50,3 +50,22 @@ as $$
   returning count;
 $$;
 
+
+-- Feedback reports sent from the extension ("Report a problem").
+-- Read and triaged on the admin page (/admin); only the backend can access it.
+create table if not exists public.feedback (
+  id          bigserial primary key,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz,
+  user_sub    text not null,
+  email       text,                              -- shown to admins only if contact_ok
+  contact_ok  boolean not null default false,
+  type        text not null default 'other',     -- bug | wrong-answer | site | idea | other
+  status      text not null default 'new',       -- new | in-progress | fixed | wont-fix
+  message     text not null,
+  details     jsonb not null default '{}'::jsonb -- site, version, field counts, last error
+);
+create index if not exists feedback_created_idx on public.feedback (created_at desc);
+create index if not exists feedback_user_idx on public.feedback (user_sub, created_at);
+alter table public.feedback enable row level security;
+-- No policies → service-role key (backend) only.

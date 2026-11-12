@@ -247,3 +247,16 @@ test("cover letters skip the answer engine, are written once per job and resume,
   h.store.coverLetterFile = { name: "cover.pdf", type: "application/pdf", data: "QUJD", text: "Hello" };
   assert.equal((await h.request({ type: "GET_COVER_LETTER_FILE" })).name, "cover.pdf");
 });
+
+test("feedback is sent to the backend with only the allowed fields", async () => {
+  const h = harness("https://jobpilot.example.invalid", [{ status: 200, body: { ok: true, id: 7 } }]);
+  const result = await h.request({
+    type: "SEND_FEEDBACK",
+    feedback: { type: "bug", message: "School not filled", contactOk: true, includeDetails: false, details: { site: "x" }, extra: "nope" },
+  });
+  assert.equal(result.id, 7);
+  assert.equal(h.calls[0].url, "https://jobpilot.example.invalid/api/feedback");
+  const body = JSON.parse(h.calls[0].options.body);
+  assert.equal(JSON.stringify(Object.keys(body).sort()), JSON.stringify(["contactOk", "details", "includeDetails", "message", "type"]));
+  assert.equal(JSON.stringify(body.details), "{}", "details are dropped when the user unticks them");
+});

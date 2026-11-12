@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Hiresprint — AI Job Autofill & Resume Match",
   "short_name": "Hiresprint",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "AI job application autofill with resume match scores, cover letters, and review tools. You stay in control of every submission.",
   "permissions": [
     "storage",

@@ -108,3 +108,54 @@ export async function deleteProfile(userSub) {
   if (!res.ok) throw new Error(`DB delete failed: ${res.status}`);
   return true;
 }
+
+// ---------- Feedback reports ----------
+
+const FEEDBACK = "feedback";
+
+async function feedbackRequest(query, { method = "GET", body, prefer } = {}) {
+  const { url, key } = config();
+  const headers = { apikey: key, Authorization: "Bearer " + key };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (prefer) headers.Prefer = prefer;
+  const res = await fetch(`${url}/rest/v1/${FEEDBACK}${query}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Feedback ${method} failed: ${res.status} ${text.slice(0, 160)}`);
+  }
+  return method === "DELETE" ? true : res.json();
+}
+
+export async function insertFeedback(row) {
+  const rows = await feedbackRequest("", { method: "POST", body: row, prefer: "return=representation" });
+  return rows[0] || row;
+}
+
+// Number of reports a user sent since the given time (for the daily limit).
+export async function countFeedbackSince(userSub, sinceIso) {
+  const rows = await feedbackRequest(
+    `?select=id&user_sub=eq.${encodeURIComponent(userSub)}&created_at=gte.${encodeURIComponent(sinceIso)}&limit=50`
+  );
+  return rows.length;
+}
+
+export function listFeedback(limit = 500) {
+  return feedbackRequest(`?select=*&order=created_at.desc&limit=${Math.min(Math.max(1, limit), 1000)}`);
+}
+
+export async function updateFeedbackStatus(id, status) {
+  const rows = await feedbackRequest(`?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { status, updated_at: new Date().toISOString() },
+    prefer: "return=representation",
+  });
+  return rows[0] || null;
+}
+
+export function deleteFeedbackForUser(userSub) {
+  return feedbackRequest(`?user_sub=eq.${encodeURIComponent(userSub)}`, { method: "DELETE" });
+}

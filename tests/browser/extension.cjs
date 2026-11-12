@@ -47,6 +47,9 @@ const test = base.extend({
         response = request.method() === "GET" ? { profile: api.profile } : { ok: true };
       } else if (endpoint === "/api/parse-resume") {
         response = { counts: { experience: 1, education: 1 }, entries, structured: api.parseStructured === undefined ? profile : api.parseStructured };
+      } else if (endpoint === "/api/feedback") {
+        api.feedback = [...(api.feedback || []), body];
+        response = { ok: true, id: api.feedback.length };
       } else if (endpoint === "/api/cover-letter") {
         api.coverLetters = (api.coverLetters || 0) + 1;
         response = { letter: `Dear Hiring Team,\n\nI am applying for the ${body.jobContext?.title || "open"} role. ${"I built reliable data pipelines with Spark and Airflow. ".repeat(12)}\n\nSincerely,\nAlex Example` };

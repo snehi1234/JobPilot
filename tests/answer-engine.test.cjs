@@ -134,7 +134,7 @@ test("user-facing extension pages never name internal vendors or plans", () => {
   const fs = require("node:fs");
   const root = path.join(__dirname, "..");
   for (const file of ["sidepanel.html", "onboarding.html", "privacy.html", "terms.html", "sidepanel.js", "content.js", "content-ui.js",
-    "backend/public/index.html", "backend/public/privacy.html", "backend/public/terms.html"]) {
+    "backend/public/index.html", "backend/public/privacy.html", "backend/public/terms.html", "backend/public/admin.html", "backend/public/admin.js"]) {
     const text = fs.readFileSync(path.join(root, file), "utf8");
     assert.doesNotMatch(text, /\b(groq|supabase|vercel|gemini|gpt-oss)\b|free[- ]tier|free plan|paid provider/i, file);
   }

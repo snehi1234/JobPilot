@@ -1485,6 +1485,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+  if (message.type === "GET_FEEDBACK_DETAILS") {
+    sendResponse(jpFeedbackDetails());
+    return false;
+  }
   if (message.type === "GET_JOB_CONTEXT") {
     sendResponse(looksLikeJobApplication() ? scrapeJobContext() : null);
     return false;
@@ -1645,6 +1649,11 @@ function jpToast(message, type = "info", action = null) {
   const colors = { info: "#4a3aff", success: "#166534", error: "#991b1b", note: "#334155" };
   toast.style.background = colors[type] || colors.info;
   toast.textContent = message;
+  if (type === "error") {
+    jpLastError = message;
+    // Errors offer a way to tell us about them.
+    if (!action && typeof jpOpenFeedback === "function") action = { label: "Report this problem", run: () => jpOpenFeedback("bug") };
+  }
   if (action) {
     const button = document.createElement("button");
     button.type = "button";
@@ -1723,6 +1732,7 @@ async function runAutofillFromButton(isAuto = false) {
     }
 
     // Fresh run: forget the previous step's highlights and undo history.
+    jpLastError = "";
     jpClearMarks();
     jpUndoStack = [];
     jpFillRecords.clear();
@@ -1785,7 +1795,8 @@ async function runAutofillFromButton(isAuto = false) {
           return;
         }
       }
-      jpToast("No application form found here. Open the job's application form, then click Autofill.", "note");
+      jpToast("No application form found here. Open the job's application form, then click Autofill.", "note",
+        { label: "Report this page", run: () => jpOpenFeedback("site") });
       return;
     }
 

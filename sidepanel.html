@@ -10,6 +10,7 @@
   <header class="app-header">
     <h1>⚡ Hiresprint</h1>
     <p class="tagline">AI autofill for job applications <span id="appVersion"></span></p>
+    <button id="feedbackBtn" class="feedback-btn hidden" type="button" title="Report a problem or share an idea">💬 Feedback</button>
   </header>
 
   <!-- Auth bar (only shown when Google sign-in is configured) -->
@@ -40,6 +41,28 @@
 
     <!-- All profile/form content — gated behind sign-in when auth is enabled -->
     <div id="appContent" class="hidden">
+    <!-- Feedback form (opened from the header) -->
+    <section id="feedbackCard" class="card feedback-card hidden">
+      <h2>Report a problem or share an idea</h2>
+      <label for="feedbackType" class="field-label">What kind of feedback?</label>
+      <select id="feedbackType">
+        <option value="bug">Something didn't work</option>
+        <option value="wrong-answer">A field got the wrong answer</option>
+        <option value="site">A job site isn't supported well</option>
+        <option value="idea">Idea or suggestion</option>
+        <option value="other">Other</option>
+      </select>
+      <label for="feedbackMessage" class="field-label">Details</label>
+      <textarea id="feedbackMessage" rows="4" maxlength="2000" placeholder="What happened, and what did you expect?"></textarea>
+      <label class="check-row"><input type="checkbox" id="feedbackDetails" checked /> Include details about the open tab (recommended)</label>
+      <details class="feedback-preview"><summary>See what's included</summary><pre id="feedbackPreview"></pre></details>
+      <label class="check-row"><input type="checkbox" id="feedbackContact" /> OK to email me back about this</label>
+      <p class="hint" style="margin: 6px 0 0;">Your answers, resume, and profile are never included.</p>
+      <div class="button-row">
+        <button id="feedbackCancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="feedbackSend" class="btn-primary" type="button">Send</button>
+      </div>
+    </section>
     <section class="card">
       <h2>How your data is used</h2>
       <p class="hint">

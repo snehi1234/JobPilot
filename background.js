@@ -232,6 +232,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // keep the channel open for async response
   }
 
+  if (message.type === "REINJECT_FRAME") {
+    const tabId = sender.tab?.id;
+    if (tabId == null || sender.frameId == null) return false;
+    chrome.scripting.executeScript({
+      target: { tabId, frameIds: [sender.frameId] },
+      files: ["content-ui.js", "content-match.js", "content-workday.js", "content-ats.js", "content.js"],
+    }).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (message.type === "TRACK") {
     trackEvent(message, sender)
       .then((result) => sendResponse(result))
@@ -405,7 +415,7 @@ async function getResumeFile({ resumeId, jobContext, url }) {
   // A resume tailored for this job wins over the original.
   if (jobContext || url) {
     const tailored = await findTailored(jobContext, url);
-    if (tailored?.data) return { name: tailored.fileName, type: "application/pdf", data: tailored.data, tailored: true };
+    if (tailored?.data) return { name: tailored.fileName, type: tailored.type || "application/pdf", data: tailored.data, tailored: true };
   }
   const { resumeFiles = {} } = await chrome.storage.local.get("resumeFiles");
   return resumeFiles[resumeKey(resumeId)] || null;
@@ -452,11 +462,11 @@ async function tailorResume({ resumeId, jobContext, url, regenerate }) {
   return { ...result, resumeId: resume.id };
 }
 
-async function saveTailored({ jobContext, url, baseResumeId, fileName, data, text }) {
+async function saveTailored({ jobContext, url, baseResumeId, fileName, fileType, data, text }) {
   if (!data || !fileName) throw new Error("Missing tailored file.");
   const { tailoredResumes = {} } = await chrome.storage.local.get("tailoredResumes");
   const next = { ...tailoredResumes, [jobKey(jobContext, url)]: {
-    baseResumeId, fileName: String(fileName).slice(0, 120), data, text: String(text || "").slice(0, 60000),
+    baseResumeId, fileName: String(fileName).slice(0, 120), type: /wordprocessingml/.test(fileType || "") ? fileType : "application/pdf", data, text: String(text || "").slice(0, 60000),
     titleKey: titleKey(jobContext), title: String(jobContext?.title || "").slice(0, 200), at: Date.now(),
   } };
   const keys = Object.keys(next).sort((a, b) => next[a].at - next[b].at);

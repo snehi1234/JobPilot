@@ -7,6 +7,7 @@ import { extractResumeDetails, mergeResumeDetails } from "./lib/resume-profile.m
 import { analyzeResume } from "./lib/ats-check.mjs";
 import { scoreResume } from "./lib/match-score.mjs";
 import { applyTailoring, renderResumePdf } from "./lib/tailored-resume.mjs";
+import { tailorPdfInPlace, tailorDocxInPlace } from "./lib/pdf-tailor.mjs";
 import { BACKEND_URL } from "./config.js";
 
 // Anonymous feature counts (see lib/telemetry.mjs); never page or profile content.
@@ -592,6 +593,62 @@ function tailoredFileName() {
   return `${who}_Resume${company ? `_${company}` : ""}.pdf`.replace(/\s+/g, "_");
 }
 
+const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function originalResumeFile(resumeId) {
+  const { resumeFiles = {} } = await chrome.storage.local.get("resumeFiles");
+  const f = resumeFiles[resumeId];
+  if (!f?.data) return null;
+  const isDocx = f.type === DOCX_TYPE || /\.docx$/i.test(f.name || "");
+  const isPdf = !isDocx && (f.type === "application/pdf" || /\.pdf$/i.test(f.name || ""));
+  return isDocx || isPdf ? { ...f, kind: isDocx ? "docx" : "pdf" } : null;
+}
+
+// The tailored resume as a file. Edits the user's own file in place when it's
+// saved on this device (keeping its design); otherwise renders a clean PDF.
+async function buildTailoredFile() {
+  const { resume, result, accept } = tailorState;
+  const accepted = {
+    summary: accept.summary ? result.summary : "",
+    bullets: result.bullets.filter((_, i) => accept.bullets.has(i)),
+  };
+  const original = await originalResumeFile(resume.id);
+  const base = tailoredFileName().replace(/\.pdf$/, "");
+  if (original) {
+    try {
+      const bytes = base64ToBytes(original.data);
+      const out = original.kind === "pdf"
+        ? await tailorPdfInPlace(pdfjsLib, bytes, accepted)
+        : await tailorDocxInPlace(window.JSZip, bytes, accepted);
+      if (out.bytes && out.applied > 0) {
+        return {
+          name: `${base}.${original.kind}`, type: original.kind === "pdf" ? "application/pdf" : DOCX_TYPE,
+          bytes: out.bytes, keptDesign: true, skipped: out.skipped,
+        };
+      }
+    } catch (err) {
+      console.error("[Hiresprint] Couldn't edit the original resume file:", err?.message || err);
+    }
+    return { name: `${base}.pdf`, type: "application/pdf", bytes: renderResumePdf(tailoredText()), keptDesign: false, skipped: 0, couldntEdit: true };
+  }
+  return { name: `${base}.pdf`, type: "application/pdf", bytes: renderResumePdf(tailoredText()), keptDesign: false, skipped: 0 };
+}
+
+function tailoredFileNote(file) {
+  if (file.couldntEdit) return "Your resume file's layout couldn't be edited safely (the changes wouldn't fit, or old wording would stay readable to ATS systems), so this uses a clean, single-column, ATS-friendly layout. Use Copy changes to keep your own design.";
+  if (!file.keptDesign) return "Your original file isn't saved on this device, so this uses a clean, single-column, ATS-friendly layout.";
+  return file.skipped
+    ? `Kept your resume's design. ${file.skipped} change${file.skipped === 1 ? "" : "s"} didn't fit in the original space and ${file.skipped === 1 ? "was" : "were"} left as-is in the file — use Copy changes to add ${file.skipped === 1 ? "it" : "them"} yourself.`
+    : "Kept your resume's design — only the changed bullets were rewritten.";
+}
+
 async function runTailor(regenerate = false) {
   const resume = selectedResume();
   if (!resume || !lastJobContext) return;
@@ -603,19 +660,26 @@ async function runTailor(regenerate = false) {
       type: "TAILOR_RESUME", resumeId: resume.id, jobContext: lastJobContext, url: lastPick?.url, regenerate,
     });
     if (result?.error) throw new Error(result.error);
-    // Score each change on its own; changes that lower the match start unchecked.
+    // A suggestion must never lower the match: drop changes that do, then
+    // drop the weakest remaining ones until the combined score is not lower.
     const base = scoreResume(resume.text, lastJobContext).score;
-    const effect = (accepted) => scoreResume(applyTailoring(resume.text, accepted), lastJobContext).score - base;
+    const scoreWith = (accepted) => scoreResume(applyTailoring(resume.text, accepted), lastJobContext).score;
+    let summary = result.summary && scoreWith({ summary: result.summary }) >= base ? result.summary : "";
+    let bullets = result.bullets
+      .map((b) => ({ ...b, effect: scoreWith({ bullets: [b] }) - base }))
+      .filter((b) => b.effect >= 0);
+    while ((bullets.length || summary) && scoreWith({ summary, bullets }) < base) {
+      if (bullets.length) bullets = bullets.slice().sort((a, b) => b.effect - a.effect).slice(0, -1);
+      else summary = "";
+    }
+    const kept = { ...result, summary, bullets, removed: result.bullets.length - bullets.length };
     const effects = {
-      summary: result.summary ? effect({ summary: result.summary }) : 0,
-      bullets: result.bullets.map((b) => effect({ bullets: [b] })),
+      summary: summary ? scoreWith({ summary }) - base : 0,
+      bullets: bullets.map((b) => b.effect),
     };
     tailorState = {
-      resume, job: lastJobContext, url: lastPick?.url, result, effects,
-      accept: {
-        summary: Boolean(result.summary) && effects.summary >= 0,
-        bullets: new Set(result.bullets.map((_, i) => i).filter((i) => effects.bullets[i] >= 0)),
-      },
+      resume, job: lastJobContext, url: lastPick?.url, result: kept, effects,
+      accept: { summary: Boolean(summary), bullets: new Set(bullets.map((_, i) => i)) },
     };
     renderTailor();
   } catch (err) {
@@ -640,6 +704,15 @@ function renderTailor() {
     scoreLine.classList.toggle("down", after < before);
   };
   const items = [scoreLine];
+  if (!result.summary && !result.bullets.length) {
+    const msg = el("p", "hint", "Your resume already uses this job's key terms well — none of the suggested rewrites would raise your match, so there's nothing to change. Try another resume or job.");
+    box.replaceChildren(msg);
+    box.classList.remove("hidden");
+    return;
+  }
+  if (result.removed > 0) {
+    items.push(el("p", "hint", `${result.removed} suggestion${result.removed === 1 ? " was" : "s were"} left out because ${result.removed === 1 ? "it" : "they"} wouldn't raise your match.`));
+  }
 
   if (result.summary) {
     const row = el("label", "tailor-item");
@@ -678,28 +751,38 @@ function renderTailor() {
     await navigator.clipboard.writeText(parts.join("\n\n"));
     showStatus("Copied — paste the changes into your own resume document.", "success");
   });
-  const download = el("button", "btn-secondary", "Download PDF");
+  const download = el("button", "btn-secondary", "Download");
   download.type = "button";
-  download.addEventListener("click", () => {
-    const url = URL.createObjectURL(new Blob([renderResumePdf(tailoredText())], { type: "application/pdf" }));
+  download.addEventListener("click", async () => {
+    const file = await buildTailoredFile();
+    const url = URL.createObjectURL(new Blob([file.bytes], { type: file.type }));
     const a = document.createElement("a");
-    a.href = url; a.download = tailoredFileName(); a.click();
+    a.href = url; a.download = file.name; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
+    note.textContent = tailoredFileNote(file);
   });
   const use = el("button", "btn-primary", "Use for this application");
   use.type = "button";
   use.addEventListener("click", async () => {
     const text = tailoredText();
+    const file = await buildTailoredFile();
     const res = await chrome.runtime.sendMessage({
       type: "SAVE_TAILORED", jobContext: job, url: tailorState.url, baseResumeId: resume.id,
-      fileName: tailoredFileName(), data: bytesToBase64(renderResumePdf(text)), text,
+      fileName: file.name, fileType: file.type, data: bytesToBase64(file.bytes), text,
     });
     if (res?.error) return showStatus(`Couldn't save: ${res.error}`, "error");
-    showStatus("Saved. Autofill will attach this tailored resume to this job's application.", "success");
+    note.textContent = tailoredFileNote(file);
+    showStatus(`Saved. Autofill will attach this tailored resume to this job's application. ${tailoredFileNote(file)}`, file.skipped ? "note" : "success");
     updateTailoredStatus();
   });
   actions.append(copy, download, use);
-  items.push(actions, el("div", "hint", "The PDF uses a clean, single-column, ATS-friendly layout. To keep your own design, copy the changes into your document instead."));
+  const note = el("div", "hint tailor-note", "");
+  originalResumeFile(resume.id).then((f) => {
+    note.textContent = f
+      ? "Download and \"Use for this application\" keep your resume's design — only the changed bullets are rewritten in your own file."
+      : "Your original file isn't saved on this device, so the file uses a clean, single-column, ATS-friendly layout. To keep your own design, replace the resume once in Your Resumes, or copy the changes.";
+  });
+  items.push(actions, note);
   box.replaceChildren(...items);
   box.classList.remove("hidden");
   updateScore();

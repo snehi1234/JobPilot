@@ -50,7 +50,7 @@ make mistakes.
 • Uses profile and job context to suggest answers
 • Handles common text fields, dropdowns, and repeated work/education sections
 • Match score for each of your resumes — right on LinkedIn, Indeed, Workday, and company job pages
-• Tailor your resume to a job in one click (rewrites your own bullets — never invents experience)
+• Tailor your resume to a job in one click — rewrites your own bullets, never invents experience, keeps your resume's design, and only suggests changes that raise your match
 • ATS check: see how applicant tracking systems read your resume, with fixes
 • Answer Studio: set salary, notice period, relocation and other common answers once
 • Workday support: dropdowns, searches, dates, and multi-step pages

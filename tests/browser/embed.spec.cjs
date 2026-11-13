@@ -39,7 +39,8 @@ const FORM = `<!doctype html><html><head><meta charset="utf-8"></head><body styl
 <label for="cv">Resume/CV</label><input id="cv" type="file"><button type="submit">Submit application</button></form>
 <script>
   const send = () => parent.postMessage({ h: document.documentElement.scrollHeight }, "*");
-  send(); setTimeout(send, 300);
+  // Like the real embed: the frame starts small and grows after the form loads.
+  setTimeout(send, 1500);
 </script></body></html>`;
 
 async function setup(app) {
@@ -98,4 +99,21 @@ test("in an embedded application frame, the Autofill button stays on screen whil
   await expect(frame.locator("#f0")).toHaveValue(profile.firstName, { timeout: 15000 });
   await expect(frame.locator("#jobpilot-checklist")).toBeAttached({ timeout: 15000 });
   await expect.poll(async () => inView(await frame.locator("#jobpilot-checklist").boundingBox()), { timeout: 5000 }).toBe(true);
+});
+
+test("a Greenhouse-style page with the description above the form shows the match badge", async ({ app }) => {
+  await app.worker.evaluate(async ({ details, software }) => {
+    await chrome.storage.local.set({ structured: details, uploadedResumeText: software,
+      resumes: [{ id: "sw", name: "Software", text: software }, { id: "da", name: "Data", text: "Data Analyst. SQL, Tableau, Excel, dashboards." }], defaultResumeId: "sw" });
+  }, { details: profile, software: SOFTWARE });
+  const url = "https://job-boards.greenhouse.io/examplegames/jobs/123";
+  await app.context.route(url, (r) => r.fulfill({ contentType: "text/html", body: `<!doctype html><html><head><meta charset="utf-8"><title>Job Application for Senior Engineer</title></head><body>
+    <h1>Senior Software Engineer</h1><div class="job__description body"><p>${DESCRIPTION}</p></div>
+    <form><label for="fn">First Name</label><input id="fn"><label for="em">Email</label><input id="em" type="email"><label for="cv">Resume/CV</label><input id="cv" type="file"></form></body></html>` }));
+  const page = await app.context.newPage();
+  await page.goto(url);
+  await expect(page.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+  const badge = page.locator("#hiresprint-match");
+  await expect(badge).toBeAttached({ timeout: 15000 });
+  expect(await badge.evaluate((h) => h.shadowRoot.querySelector(".pill").innerText.replace(/\s+/g, " "))).toMatch(/\d+% match · Software/);
 });

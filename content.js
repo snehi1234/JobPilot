@@ -50,6 +50,16 @@ if (window !== window.top) {
   if (w < JP_MIN_FRAME_SIZE || h < JP_MIN_FRAME_SIZE) {
     console.log(`[Hiresprint] Skipping tiny iframe (${w}x${h}) — likely an ad/widget, not a form.`);
     jpSkipFrame = true;
+    // Embedded application forms (e.g. Greenhouse's job_app embed) start small
+    // and grow once their form loads; load the scripts again when that happens.
+    if (w >= JP_MIN_FRAME_SIZE && typeof window.addEventListener === "function") {
+      const onGrow = () => {
+        if (window.innerHeight < JP_MIN_FRAME_SIZE) return;
+        window.removeEventListener("resize", onGrow);
+        try { chrome.runtime.sendMessage({ type: "REINJECT_FRAME" }).catch(() => {}); } catch { /* extension reloading */ }
+      };
+      window.addEventListener("resize", onGrow);
+    }
   }
   // iCIMS' same-origin content frame is read and filled by the top frame.
   if (!jpSkipFrame && typeof jpAtsAdoptedFrame === "function" && jpAtsAdoptedFrame()) {
@@ -414,9 +424,11 @@ function applicationSourceHint() {
 }
 
 // Grab the job description text so the AI can tailor answers to this role.
-function scrapeJobDescription() {
+function scrapeJobDescription({ specificOnly = false } = {}) {
   const specific = [
     "[data-automation-id='jobPostingDescription']",
+    ".content-wrapper.posting-page",
+    "[data-qa='job-description']",
     "[class*='job-description' i]",
     "[class*='jobdescription' i]",
     "[class*='posting-description' i]",
@@ -440,7 +452,7 @@ function scrapeJobDescription() {
     });
     if (best.length > 1500) break;
   }
-  if (best.length < 400) {
+  if (best.length < 400 && !specificOnly) {
     for (const sel of ["article", "main"]) {
       document.querySelectorAll(sel).forEach((el) => {
         const txt = (el.innerText || "").trim();

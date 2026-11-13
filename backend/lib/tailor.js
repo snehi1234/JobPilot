@@ -22,8 +22,13 @@ export function reflowBullets(text) {
   for (const raw of String(text || "").split("\n")) {
     const t = raw.trim();
     const prev = out.length ? out[out.length - 1].trim() : "";
-    const continues = inBullet && t && prev && !BULLET.test(t) && !isHeading(t) && !DATE.test(t) &&
-      (/^[a-z0-9(&,;:/–-]/.test(t) || (!/[.!?;:]$/.test(prev) && prev.length >= 60));
+    const plain = t && prev && !BULLET.test(t) && !isHeading(t) && !DATE.test(t);
+    // Bulleted lines: continuations start lowercase or follow a long unfinished
+    // line. Without bullet symbols (bullets drawn as graphics) only the strict
+    // rule applies, so separate bullets never merge.
+    const continues = plain && (inBullet
+      ? /^[a-z0-9(&,;:/–-]/.test(t) || (!/[.!?;:]$/.test(prev) && prev.length >= 60)
+      : /^[a-z0-9(&,;:/–-]/.test(t) && !/[.!?;:]$/.test(prev) && prev.length >= 50);
     if (continues) {
       out[out.length - 1] = `${out[out.length - 1].replace(/\s+$/, "")} ${t}`;
       continue;
@@ -75,7 +80,7 @@ Rules:
 - "original" must be copied EXACTLY from the resume (one bullet, without the bullet symbol).
 - Never add employers, titles, technologies, numbers, or results that are not in that bullet. Keep every number as written.
 - Keep EVERY technology, language, tool, and product named in the original bullet (e.g. "C#, .NET Core 6, Vue.js", "Kafka", "RabbitMQ"). Removing them hurts the candidate's match.
-- Keep each improved bullet to one or two sentences, under 260 characters, starting with a strong past-tense verb.
+- Keep each improved bullet about the same length as the original (within 10%, never more than 15% longer) so it fits the resume's layout, starting with a strong past-tense verb. If the original starts with a bold-style lead-in phrase, start the rewrite with a similar short phrase followed by a comma.
 Respond with ONLY this JSON:
 {"summary":"","bullets":[{"original":"","improved":"","keywords":[""]}],"skills":[""],"gaps":[""]}`;
 }

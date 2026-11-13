@@ -37,14 +37,19 @@ function jpJobOnPage() {
     if (!description || !title) return null;
     return { title, company: jpFirstText(board.company).split("\n")[0].slice(0, 120), description };
   }
-  // Company career sites and ATS postings: only before the application form
-  // is open (the checklist shows the match while filling).
+  // Company career sites and ATS postings and applications.
   if (typeof looksLikeJobApplication !== "function") return null;
   if (!looksLikeJobApplication() && !jpLooksLikePosting()) return null;
-  const postingShown = !!document.querySelector("[data-automation-id='jobPostingDescription']") ||
-    (typeof jpAtsIsPosting === "function" && jpAtsIsPosting());
-  if (!postingShown && typeof jpFormVisible === "function" && jpFormVisible()) return null;
+  // Greenhouse, Lever, Ashby, … show the description above the form, so the
+  // badge appears whenever the page has a real description (form open or not).
   const ctx = typeof scrapeJobContext === "function" ? scrapeJobContext() : null;
+  const formOpen = typeof jpFormVisible === "function" && jpFormVisible();
+  if (formOpen && ctx) {
+    // With a form on the page, only a real description container counts —
+    // never the whole page's text (that would score the form's labels).
+    const ats = (typeof jpAtsJobContext === "function" && jpAtsJobContext()) || {};
+    ctx.description = ats.description || scrapeJobDescription({ specificOnly: true });
+  }
   if (!ctx?.description || ctx.description.length < 300) return null;
   return { title: ctx.title, company: ctx.company, description: ctx.description };
 }

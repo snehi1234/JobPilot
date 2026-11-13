@@ -81,3 +81,19 @@ test("the extension and the server join bullets the same way", async () => {
   const server = await import(pathToFileURL(path.join(__dirname, "..", "backend", "lib", "tailor.js")).href);
   assert.equal(server.reflowBullets(WRAPPED), reflowBullets(WRAPPED));
 });
+
+test("without bullet symbols, only clear wrapped lines are joined; separate bullets never merge", async () => {
+  const { reflowBullets } = await load();
+  const text = [
+    "Experience",
+    "Led the File Exchange platform, a secure portal that extended partner integration beyond B2B APIs to",
+    "secure UI-driven file upload and download for 30+ partners",
+    "Built the notifications service with templating, delivery, and retry handling for every partner",
+    "Designed the API contracts used across 60+ production APIs",
+  ].join("\n");
+  const lines = reflowBullets(text).split("\n");
+  assert.equal(lines.length, 4);
+  assert.match(lines[1], /beyond B2B APIs to secure UI-driven file upload/);
+  assert.match(lines[2], /^Built the notifications service/);
+  assert.match(lines[3], /^Designed the API contracts/);
+});

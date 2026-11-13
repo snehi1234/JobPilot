@@ -521,7 +521,7 @@ test("tailoring suggests grounded rewrites, raises the score, and attaches the t
   await expect(panel.locator(".tailor-gaps")).toContainText("Go");
 
   // Download works and produces a PDF.
-  const [download] = await Promise.all([panel.waitForEvent("download"), panel.getByRole("button", { name: "Download PDF" }).click()]);
+  const [download] = await Promise.all([panel.waitForEvent("download"), panel.getByRole("button", { name: "Download", exact: true }).click()]);
   expect(download.suggestedFilename()).toBe("Alex_Example_Resume_Acme.pdf");
 
   // Cached: a second tailor of the same job doesn't call the AI again.

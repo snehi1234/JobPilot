@@ -87,6 +87,7 @@ async function contentHarness(initial = {}) {
     },
   });
   vm.runInContext(readSource("content-ui.js"), context);
+  vm.runInContext(readSource("content-match.js"), context);
   vm.runInContext(readSource("content.js"), context);
   await flush();
   context.jpToast = (...args) => toasts.push(args);

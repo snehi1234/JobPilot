@@ -47,6 +47,15 @@ const test = base.extend({
         response = request.method() === "GET" ? { profile: api.profile } : { ok: true };
       } else if (endpoint === "/api/parse-resume") {
         response = { counts: { experience: 1, education: 1 }, entries, structured: api.parseStructured === undefined ? profile : api.parseStructured };
+      } else if (endpoint === "/api/tailor") {
+        api.tailorCalls = (api.tailorCalls || 0) + 1;
+        const line = String(body.resume || "").split("\n").find((l) => /pipelines|microservices/.test(l)) || "";
+        response = {
+          summary: `Engineer focused on ${body.jobContext?.title || "this role"}.`,
+          bullets: line ? [{ original: line, line, improved: `Designed and operated ${line.replace(/^.*?(ETL|Java)/, "$1")} for production analytics`, keywords: ["ETL"] }] : [],
+          skills: ["Spark", "Airflow"],
+          gaps: ["Go"],
+        };
       } else if (endpoint === "/api/feedback") {
         api.feedback = [...(api.feedback || []), body];
         response = { ok: true, id: api.feedback.length };

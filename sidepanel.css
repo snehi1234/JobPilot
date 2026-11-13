@@ -311,6 +311,17 @@ textarea:focus {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+.salary-rows { display: flex; flex-direction: column; gap: 6px; }
+.ats-report { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin: -2px 0 4px; background: #fafafa; font-size: 12px; }
+.ats-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ats-score { font-size: 15px; padding: 2px 8px; border-radius: 999px; }
+.ats-score.good { background: #dcfce7; color: #166534; } .ats-score.ok { background: #fef3c7; color: #92400e; } .ats-score.poor { background: #fee2e2; color: #991b1b; }
+.ats-item { margin: 4px 0; }
+.ats-item .ats-title { font-weight: 600; }
+.ats-item.pass .ats-title { color: #166534; font-weight: 500; } .ats-item.warn .ats-title { color: #92400e; } .ats-item.fail .ats-title { color: #991b1b; }
+.ats-detail { color: #475569; margin: 2px 0 0 14px; }
+.salary-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.salary-row input { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; font-size: 13px; }
 
 .subhead {
   font-size: 13px;
@@ -401,3 +412,14 @@ textarea:focus {
   background: #fee2e2;
   color: #991b1b;
 }
+.tailor-box { margin-top: 10px; border-top: 1px solid #eef0f4; padding-top: 10px; }
+.tailor-score { font-weight: 600; margin: 8px 0 6px; color: #166534; }
+.tailor-item { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed #eef0f4; cursor: pointer; font-size: 12px; }
+.tailor-item input { margin-top: 3px; }
+.tailor-kind { font-weight: 600; font-size: 11px; color: #4a3aff; text-transform: uppercase; }
+.tailor-new { color: #111827; }
+.tailor-old { color: #94a3b8; text-decoration: line-through; margin-top: 2px; }
+.tailor-gaps { margin: 8px 0 0; }
+.tailor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.tailor-actions button { flex: 1; min-width: 110px; font-size: 12px; padding: 7px 8px; }
+.tailored-status { margin-top: 8px; font-size: 12px; background: #eef2ff; border-radius: 8px; padding: 6px 8px; }

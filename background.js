@@ -33,7 +33,7 @@ async function reinjectContentScripts() {
   await Promise.all(tabs.map((tab) =>
     chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
-      files: ["content-ui.js", "content.js"],
+      files: ["content-ui.js", "content-match.js", "content.js"],
     }).catch(() => {}) // restricted pages (e.g. the Web Store) can't be scripted
   ));
 }
@@ -170,6 +170,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     SAVE_TO_LIBRARY: saveToLibrary,
     REVISE_DRAFT: reviseDraft,
     GET_RESUME_FILE: getResumeFile,
+    TAILOR_RESUME: tailorResume,
+    SAVE_TAILORED: saveTailored,
+    CLEAR_TAILORED: clearTailored,
+    GET_TAILORED: async ({ jobContext, url }) => {
+      const t = await findTailored(jobContext, url);
+      return t ? { fileName: t.fileName, baseResumeId: t.baseResumeId, at: t.at } : null;
+    },
     WRITE_COVER_LETTER: writeCoverLetter,
     SAVE_COVER_LETTER: saveCoverLetter,
     GET_COVER_LETTER_FILE: async () => (await chrome.storage.local.get("coverLetterFile")).coverLetterFile || null,
@@ -249,7 +256,7 @@ async function enrichJobContext(jobContext = {}, pageUrl) {
 async function chooseResume(message) {
   const { resumes, defaultResumeId } = await loadResumes();
   const { resumeChoices = {} } = await chrome.storage.local.get("resumeChoices");
-  const jobContext = await enrichJobContext(message.jobContext, message.url);
+  const jobContext = message.noFetch ? (message.jobContext || {}) : await enrichJobContext(message.jobContext, message.url);
   const key = companyKey(jobContext, message.host, message.url);
   const pick = pickResume(resumes, jobContext, {
     defaultId: defaultResumeId,
@@ -301,9 +308,73 @@ async function reviseDraft({ question, answer, mode, jobContext, profile }) {
   return callBackendWithAuth("/api/draft", { question, answer, mode, jobContext, profile });
 }
 
-async function getResumeFile({ resumeId }) {
+async function getResumeFile({ resumeId, jobContext, url }) {
+  // A resume tailored for this job wins over the original.
+  if (jobContext || url) {
+    const tailored = await findTailored(jobContext, url);
+    if (tailored?.data) return { name: tailored.fileName, type: "application/pdf", data: tailored.data, tailored: true };
+  }
   const { resumeFiles = {} } = await chrome.storage.local.get("resumeFiles");
   return resumeFiles[resumeKey(resumeId)] || null;
+}
+
+// ---------- Tailored resumes ----------
+
+const hostOf = (url) => { try { return new URL(url).hostname; } catch { return ""; } };
+const titleKey = (jobContext = {}) => String(jobContext.title || "").toLowerCase().replace(/^application:\s*/, "").replace(/[^a-z0-9]+/g, " ").trim();
+const jobKey = (jobContext = {}, url = "") => `${companyKey(jobContext, hostOf(url), url)}|${titleKey(jobContext)}`;
+
+// The tailored resume for this job: same company and title, or (when the
+// user tailored on a job board and applies on the company's site) the same
+// title tailored in the last 12 hours.
+async function findTailored(jobContext, url) {
+  const { tailoredResumes = {} } = await chrome.storage.local.get("tailoredResumes");
+  const exact = tailoredResumes[jobKey(jobContext, url)];
+  if (exact) return exact;
+  const title = titleKey(jobContext);
+  if (!title) return null;
+  return Object.values(tailoredResumes)
+    .filter((t) => t.titleKey === title && Date.now() - t.at < 12 * 3600e3)
+    .sort((a, b) => b.at - a.at)[0] || null;
+}
+
+async function tailorResume({ resumeId, jobContext, url, regenerate }) {
+  const { resumes } = await loadResumes();
+  const resume = resumes.find((r) => r.id === resumeId) || resumes[0];
+  if (!resume?.text) throw new Error("Upload a resume first.");
+  const job = jobContext?.noFetch ? jobContext : await enrichJobContext(jobContext, url);
+  const key = `${jobKey(job, url)}|${resume.id}`;
+  const { tailorCache = {} } = await chrome.storage.local.get("tailorCache");
+  if (!regenerate && tailorCache[key]?.result) return { ...tailorCache[key].result, cached: true, resumeId: resume.id };
+  const result = await callBackendWithAuth("/api/tailor", {
+    resume: resume.text,
+    jobContext: { title: job.title, company: job.company, description: job.description },
+  });
+  const next = { ...tailorCache, [key]: { result, at: Date.now() } };
+  const keys = Object.keys(next).sort((a, b) => next[a].at - next[b].at);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete next[k];
+  await chrome.storage.local.set({ tailorCache: next });
+  return { ...result, resumeId: resume.id };
+}
+
+async function saveTailored({ jobContext, url, baseResumeId, fileName, data, text }) {
+  if (!data || !fileName) throw new Error("Missing tailored file.");
+  const { tailoredResumes = {} } = await chrome.storage.local.get("tailoredResumes");
+  const next = { ...tailoredResumes, [jobKey(jobContext, url)]: {
+    baseResumeId, fileName: String(fileName).slice(0, 120), data, text: String(text || "").slice(0, 60000),
+    titleKey: titleKey(jobContext), title: String(jobContext?.title || "").slice(0, 200), at: Date.now(),
+  } };
+  const keys = Object.keys(next).sort((a, b) => next[a].at - next[b].at);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete next[k];
+  await chrome.storage.local.set({ tailoredResumes: next });
+  return { ok: true };
+}
+
+async function clearTailored({ jobContext, url }) {
+  const { tailoredResumes = {} } = await chrome.storage.local.get("tailoredResumes");
+  delete tailoredResumes[jobKey(jobContext, url)];
+  await chrome.storage.local.set({ tailoredResumes });
+  return { ok: true };
 }
 
 // AI cover letters are kept per job and resume, so re-filling the same
@@ -348,7 +419,7 @@ async function answerFields(message) {
   let memory = memories[key];
   if (memory?.version !== version) memory = { version, entries: {} };
 
-  const context = { sourceHint: message.jobContext?.sourceHint, today: new Date() };
+  const context = { sourceHint: message.jobContext?.sourceHint, jobTitle: message.jobContext?.title, today: new Date() };
   const { suggestions, pending } = message.skipLocal
     ? { suggestions: [], pending: fields }
     : resolveLocally(fields, {

@@ -220,7 +220,7 @@ async function jpAttachResume(resumeId) {
   const inputs = jpResumeFileInputs();
   if (!inputs.length) return "none";
   const input = inputs[0];
-  const stored = await chrome.runtime.sendMessage({ type: "GET_RESUME_FILE", resumeId }).catch(() => null);
+  const stored = await chrome.runtime.sendMessage({ type: "GET_RESUME_FILE", resumeId, jobContext: jpLastJobContext, url: location.href }).catch(() => null);
   if (!stored?.data) return input.files?.length ? "attached" : "unavailable";
   if (input.files?.length || jpUploadShowsFile(input, stored.name)) return "attached";
   return jpAttachFile(input, jpBase64ToFile(stored));

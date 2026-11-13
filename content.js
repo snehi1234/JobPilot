@@ -1490,7 +1490,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === "GET_JOB_CONTEXT") {
-    sendResponse(looksLikeJobApplication() ? scrapeJobContext() : null);
+        if (looksLikeJobApplication()) {
+      const ctx = scrapeJobContext();
+      // On an application form, prefer the posting text the match badge saw.
+      sendResponse(ctx);
+    } else {
+      // Job boards (LinkedIn, Indeed, …): the job being viewed.
+      const job = typeof jpJobOnPage === "function" ? jpJobOnPage() : null;
+      sendResponse(job ? { ...job, noFetch: true } : null);
+    }
     return false;
   }
   if (message.type === "CHECK_JOB_PAGE") {

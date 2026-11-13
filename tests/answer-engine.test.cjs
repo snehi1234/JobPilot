@@ -174,3 +174,47 @@ test("public pages use the support address, never a personal email", () => {
     assert.match(fs.readFileSync(path.join(root, file), "utf8"), /hiresprint\.support@gmail\.com/, file);
   }
 });
+
+test("Answer Studio answers common questions exactly, with salary by role", async () => {
+  const { resolveLocally, salaryFor } = await load();
+  const studio = {
+    ...profile, salary: "$170,000", salaryRole1: "data", salaryAmount1: "$160,000", salaryRole2: "manager", salaryAmount2: "$210,000",
+    noticePeriod: "2 weeks", startAvailability: "Immediately", relocation: "Yes", workArrangement: "Hybrid",
+    clearance: "None", over18: "Yes", preferredName: "Sam", pronouns: "he/him", defaultSource: "Company website",
+  };
+  assert.equal(salaryFor(studio, "Senior Data Engineer"), "$160,000");
+  assert.equal(salaryFor(studio, "Engineering Manager, Payments"), "$210,000");
+  assert.equal(salaryFor(studio, "Backend Engineer"), "$170,000");
+  const fields = [
+    f(1, "What are your salary expectations?"), f(2, "Desired compensation", "select"), f(3, "Current salary"),
+    f(4, "What is your notice period?"), f(5, "When can you start?"), f(6, "Are you willing to relocate?", "radio"),
+    f(7, "Work arrangement preference", "select"), f(8, "Do you have an active security clearance?", "radio"),
+    f(9, "Are you at least 18 years of age?", "radio"), f(10, "Preferred name"), f(11, "Pronouns", "combobox"),
+    f(12, "How did you hear about us?", "select"), f(13, "Are you willing to work on-site 3 days a week in a hybrid setup?", "radio"),
+    f(14, "Are you currently based in Seattle and willing to work on-site?", "radio"), f(15, "Start Date (month)", "select"),
+  ];
+  const { suggestions, pending } = resolveLocally(fields, { structured: studio, context: { jobTitle: "Senior Data Engineer" } });
+  const v = Object.fromEntries(suggestions.map((s) => [s.id, s.value]));
+  assert.equal(v[1], "$160,000");
+  assert.equal(v[2], "$160,000");
+  assert.equal(v[3], undefined, "current salary is never answered with the target");
+  assert.equal(v[4], "2 weeks");
+  assert.equal(v[5], "Immediately");
+  assert.equal(v[6], "Yes");
+  assert.equal(v[7], "Hybrid");
+  assert.equal(v[8], "None");
+  assert.equal(v[9], "Yes");
+  assert.equal(v[10], "Sam");
+  assert.equal(v[11], "he/him");
+  assert.equal(v[12], "Company website", "falls back to the default source when the page gives none");
+  assert.equal(v[13], "Yes");
+  assert.equal(v[14], undefined, "compound location questions go to the AI");
+  assert.equal(v[15], undefined, "education/experience start dates are not availability");
+  assert.ok(pending.some((p) => p.id === "14") && pending.some((p) => p.id === "3"));
+  assert.ok(suggestions.every((s) => s.source === "profile"));
+
+  const remote = resolveLocally([f(1, "Are you able to work in the office 5 days a week?", "radio")], { structured: { workArrangement: "Remote" }, context: {} });
+  assert.equal(remote.suggestions[0].value, "No");
+  const empty = resolveLocally([f(1, "What is your notice period?")], { structured: {}, context: {} });
+  assert.equal(empty.suggestions.length, 0, "blank Answer Studio fields fall through to the AI");
+});

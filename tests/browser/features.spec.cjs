@@ -446,3 +446,154 @@ test("the side panel's Feedback button sends a report about the open tab, or non
   await expect(panel.locator("#status")).toContainText("Please describe");
   expect(app.api.feedback.length).toBe(1);
 });
+
+// ---------- Match badge on job postings ----------
+
+test("job boards show a resume match badge for the job being viewed, and it can be turned off", async ({ app }) => {
+  const job = await setup(app);
+  await job.close();
+  const LINKEDIN = "https://www.linkedin.com/jobs/view/4242/";
+  await app.context.route("https://www.linkedin.com/**", (route) => route.fulfill({ contentType: "text/html", body: `<!doctype html><html><body>
+    <h1 class="job-details-jobs-unified-top-card__job-title">Senior Data Engineer</h1>
+    <div class="job-details-jobs-unified-top-card__company-name">Acme</div>
+    <div id="job-details">Own ETL pipelines using Spark, Airflow and dbt on Snowflake. Strong SQL and Python. Kafka streaming. Data modeling.</div>
+    <script>window.__requests = 0;</script></body></html>` }));
+  const page = await app.context.newPage();
+  const fetched = [];
+  page.on("request", (r) => { if (!/linkedin\.com\/jobs\/view/.test(r.url()) && /linkedin/.test(r.url())) fetched.push(r.url()); });
+  await page.goto(LINKEDIN);
+  const badge = page.locator("#hiresprint-match");
+  await expect(badge).toBeAttached({ timeout: 10000 });
+  const text = await badge.evaluate((host) => host.shadowRoot.querySelector(".pill").innerText.replace(/\s+/g, " "));
+  expect(text).toMatch(/\d+% match · Data/);
+  await badge.evaluate((host) => host.shadowRoot.querySelector(".pill").click());
+  const panel = await badge.evaluate((host) => host.shadowRoot.querySelector(".panel").innerText);
+  expect(panel).toContain("Software");
+  expect(panel).toMatch(/✓ .*Spark/);
+  expect(fetched).toEqual([]);
+  expect(await page.locator("#jobpilot-fab").count()).toBe(0, "no Autofill button on job boards");
+
+  // A different job on the same page (LinkedIn swaps jobs without a page load).
+  await page.evaluate(() => {
+    document.querySelector("h1").textContent = "Backend Software Engineer";
+    document.getElementById("job-details").textContent = "Java microservices on Kubernetes and Docker, PostgreSQL, Redis, REST APIs, distributed systems.";
+  });
+  await expect.poll(() => badge.evaluate((host) => host.shadowRoot.querySelector(".pill").innerText.replace(/\s+/g, " ")).catch(() => ""), { timeout: 8000 })
+    .toMatch(/· Software/);
+
+  await app.panel.reload();
+  await app.panel.locator("#matchBadgeToggle").uncheck();
+  await expect(badge).not.toBeAttached({ timeout: 8000 });
+});
+
+test("company job postings show the badge before the application form is opened", async ({ app }) => {
+  const job = await setup(app);
+  await job.close();
+  const POSTING = "https://careers.acme.test/jobs/555";
+  await app.context.route(POSTING, (route) => route.fulfill({ contentType: "text/html", body: `<!doctype html><html><head><title>Acme - Data Engineer</title></head><body>
+    <h1>Data Engineer</h1><div class="job-description">${"Own ETL pipelines using Spark, Airflow and dbt on Snowflake. Strong SQL and Python. Kafka streaming. ".repeat(4)}</div>
+    <a href="/jobs/555/apply">Apply for this job</a><label>Resume</label><input type="file"></body></html>` }));
+  const page = await app.context.newPage();
+  await page.goto(POSTING);
+  await expect(page.locator("#hiresprint-match")).toBeAttached({ timeout: 10000 });
+  await expect(page.locator("#jobpilot-fab")).toBeVisible();
+  // On the application form itself, the checklist shows the match instead.
+  const form = await app.context.newPage();
+  await form.goto(JOB_URL);
+  await expect(form.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+  await form.waitForTimeout(2500);
+  expect(await form.locator("#hiresprint-match").count()).toBe(0);
+});
+
+// ---------- Tailor resume ----------
+
+test("tailoring suggests grounded rewrites, raises the score, and attaches the tailored PDF to that job only", async ({ app }) => {
+  const job = await setup(app);
+  const { panel } = app;
+  await panel.reload();
+  await job.bringToFront();
+  await expect(panel.locator("#matchCard")).toBeVisible({ timeout: 15000 });
+  await panel.locator("#tailorBtn").click();
+  await expect(panel.locator(".tailor-item")).toHaveCount(2, { timeout: 10000 });
+  await expect(panel.locator(".tailor-score")).toContainText(/Match: \d+% → \d+%/);
+  await expect(panel.locator(".tailor-item").first()).toContainText("Engineer focused on");
+  await expect(panel.locator(".tailor-old")).toContainText("ETL data pipelines");
+  await expect(panel.locator(".tailor-gaps")).toContainText("Go");
+
+  // Download works and produces a PDF.
+  const [download] = await Promise.all([panel.waitForEvent("download"), panel.getByRole("button", { name: "Download PDF" }).click()]);
+  expect(download.suggestedFilename()).toBe("Alex_Example_Resume_Acme.pdf");
+
+  // Cached: a second tailor of the same job doesn't call the AI again.
+  await panel.getByRole("button", { name: "Use for this application" }).click();
+  await expect(panel.locator("#tailoredStatus")).toContainText("This job will get: Alex_Example_Resume_Acme.pdf");
+  expect(app.api.tailorCalls).toBe(1);
+
+  await job.bringToFront();
+  await autofill(job);
+  await expect.poll(() => job.locator("#cv").evaluate((el) => el.files[0]?.name || ""), { timeout: 10000 }).toBe("Alex_Example_Resume_Acme.pdf");
+  const head = await job.locator("#cv").evaluate(async (el) => (await el.files[0].text()).slice(0, 8));
+  expect(head).toBe("%PDF-1.4");
+  const pdf = await job.locator("#cv").evaluate(async (el) => el.files[0].text());
+  expect(pdf).toContain("Designed and operated ETL data pipelines");
+
+  // Another job keeps the original resume file.
+  const other = await app.context.newPage();
+  await app.context.route("https://careers.acme.test/jobs/777/apply", (route) => route.fulfill({ contentType: "text/html",
+    body: PAGE.replace("<title>Acme - Data Engineer</title>", "<title>Acme - Platform Engineer</title>").replace("<h1>Data Engineer</h1>", "<h1>Platform Engineer</h1>") }));
+  await other.goto("https://careers.acme.test/jobs/777/apply");
+  await expect(other.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+  await autofill(other);
+  await expect.poll(() => other.locator("#cv").evaluate((el) => el.files[0]?.name || ""), { timeout: 10000 }).toMatch(/^(data|software)\.pdf$/);
+
+  // "Use original instead" removes the tailored file for the first job.
+  await job.bringToFront();
+  await panel.getByRole("button", { name: "Use original instead" }).click();
+  await expect(panel.locator("#tailoredStatus")).toBeHidden();
+});
+
+test("ATS check reports on each saved resume", async ({ app }) => {
+  const job = await setup(app);
+  await job.close();
+  const { panel } = app;
+  await panel.reload();
+  await expect(panel.locator("#resumeList .resume-row")).toHaveCount(2);
+  await panel.locator("#resumeList .resume-row").first().getByRole("button", { name: "ATS check" }).click();
+  const report = panel.locator(".ats-report");
+  await expect(report).toBeVisible();
+  await expect(report.locator(".ats-score")).toHaveText(/^\d+\/100$/);
+  await expect(report).toContainText("Missing: email, phone, LinkedIn URL");
+  await panel.locator("#resumeList .resume-row").first().getByRole("button", { name: "ATS check" }).click();
+  await expect(report).toHaveCount(0);
+});
+
+test("Answer Studio values are saved and used to fill matching questions", async ({ app }) => {
+  const job = await setup(app);
+  await job.close();
+  const { panel, context } = app;
+  await panel.reload();
+  await panel.locator("#sf_noticePeriod").fill("3 weeks");
+  await panel.locator("#sf_relocation").selectOption("No");
+  await panel.locator("#sf_salary").fill("$170,000");
+  await panel.locator("#sf_salaryRole1").fill("data");
+  await panel.locator("#sf_salaryAmount1").fill("$160,000");
+  await panel.locator("#studioSave").click();
+  await expect.poll(() => app.worker.evaluate(async () => (await chrome.storage.local.get("structured")).structured?.noticePeriod)).toBe("3 weeks");
+  const URL2 = "https://careers.acme.test/jobs/321/questions";
+  await context.route(URL2, (route) => route.fulfill({ contentType: "text/html", body: `<!doctype html><html><head><title>Acme - Senior Data Engineer</title></head><body>
+    <h1>Senior Data Engineer</h1><form onsubmit="event.preventDefault()">
+    <label for="fn">First name</label><input id="fn"><label for="em">Email</label><input id="em" type="email">
+    <label for="np">What is your notice period?</label><input id="np">
+    <label for="rl">Are you willing to relocate?</label><select id="rl"><option value="">Select…</option><option>Yes</option><option>No</option></select>
+    <label for="sal">What are your salary expectations?</label><input id="sal"></form></body></html>` }));
+  const page = await context.newPage();
+  await page.goto(URL2);
+  await expect(page.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
+  await autofill(page);
+  await expect(page.locator("#np")).toHaveValue("3 weeks", { timeout: 10000 });
+  await expect(page.locator("#rl")).toHaveValue("No");
+  await expect(page.locator("#sal")).toHaveValue("$160,000");
+  await expect(page.locator("#np")).toHaveAttribute("data-jobpilot-source", "profile");
+  const asked = app.api.calls.filter((c) => c.endpoint === "/api/generate").flatMap((c) => c.body.fields.map((f) => f.label));
+  expect(asked.some((l) => /notice|relocate|salary/i.test(l))).toBe(false);
+});

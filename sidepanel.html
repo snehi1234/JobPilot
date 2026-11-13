@@ -208,6 +208,73 @@
       </div>
     </section>
 
+    <!-- Answer Studio: exact answers to questions most applications ask -->
+    <section class="card" id="answerStudio">
+      <h2>Answer Studio</h2>
+      <p class="hint">Set these once and they're filled exactly as written — never guessed by AI. Leave any blank to skip it.</p>
+      <h3 class="subhead">Salary expectations</h3>
+      <p class="hint" style="margin-top:0">Default is in Quick Details. Add a different number for roles whose title contains a word, e.g. "data" or "manager".</p>
+      <div class="salary-rows">
+        <div class="salary-row"><input type="text" id="sf_salaryRole1" placeholder="Title contains, e.g. data" aria-label="Role keyword 1" /><input type="text" id="sf_salaryAmount1" placeholder="e.g. $165,000" aria-label="Salary for role keyword 1" /></div>
+        <div class="salary-row"><input type="text" id="sf_salaryRole2" placeholder="e.g. manager" aria-label="Role keyword 2" /><input type="text" id="sf_salaryAmount2" placeholder="e.g. $200,000" aria-label="Salary for role keyword 2" /></div>
+        <div class="salary-row"><input type="text" id="sf_salaryRole3" placeholder="e.g. staff" aria-label="Role keyword 3" /><input type="text" id="sf_salaryAmount3" placeholder="e.g. $230,000" aria-label="Salary for role keyword 3" /></div>
+      </div>
+      <h3 class="subhead">Availability &amp; preferences</h3>
+      <div class="field-grid">
+        <label class="field">
+          <span>Notice period</span>
+          <input type="text" id="sf_noticePeriod" placeholder="e.g. 2 weeks" />
+        </label>
+        <label class="field">
+          <span>Earliest start</span>
+          <input type="text" id="sf_startAvailability" placeholder="e.g. Immediately, or 2 weeks after offer" />
+        </label>
+        <label class="field">
+          <span>Willing to relocate?</span>
+          <select id="sf_relocation">
+            <option value="">—</option>
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Work arrangement</span>
+          <select id="sf_workArrangement">
+            <option value="">—</option>
+            <option value="Remote">Remote</option>
+            <option value="Hybrid">Hybrid</option>
+            <option value="On-site">On-site</option>
+            <option value="Open to any">Open to any</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Security clearance</span>
+          <input type="text" id="sf_clearance" placeholder="e.g. None, or Secret (active)" />
+        </label>
+        <label class="field">
+          <span>18 or older?</span>
+          <select id="sf_over18">
+            <option value="">—</option>
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Preferred name</span>
+          <input type="text" id="sf_preferredName" placeholder="If different from first name" />
+        </label>
+        <label class="field">
+          <span>Pronouns</span>
+          <input type="text" id="sf_pronouns" placeholder="e.g. he/him, or blank" />
+        </label>
+        <label class="field">
+          <span>"How did you hear about us?"</span>
+          <input type="text" id="sf_defaultSource" placeholder="e.g. LinkedIn (used when the page can't tell)" />
+        </label>
+      </div>
+      <div class="button-row" style="margin-top:8px"><button id="studioSave" class="btn-secondary" type="button">Save answers</button></div>
+    </section>
+
     <!-- Profile / resume -->
     <section class="card">
       <h2>2. Your Resumes</h2>
@@ -269,6 +336,12 @@
       <h2>Match for this job</h2>
       <div id="matchScores"></div>
       <p id="matchSkills" class="hint" style="margin: 6px 0 0;"></p>
+      <div id="tailorBox" class="tailor-box">
+        <button id="tailorBtn" class="btn-primary" type="button">✨ Tailor this resume for the job</button>
+        <p class="hint" style="margin: 6px 0 0;">AI suggests rewrites of your own bullets using the job's wording — it never adds experience you don't have.</p>
+        <div id="tailorResult" class="hidden"></div>
+        <div id="tailoredStatus" class="tailored-status hidden"></div>
+      </div>
     </section>
 
     <div class="button-row">
@@ -281,6 +354,10 @@
       <label class="switch-label">
         <input type="checkbox" id="fabToggle" checked />
         <span>Show floating Autofill button on job pages</span>
+      </label>
+      <label class="switch-label">
+        <input type="checkbox" id="matchBadgeToggle" checked />
+        <span>Show resume match on job postings (LinkedIn, Indeed, company sites)</span>
       </label>
     </div>
 

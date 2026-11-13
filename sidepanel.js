@@ -4,6 +4,9 @@ import * as pdfjsLib from "./lib/pdf.min.mjs";
 import { isAuthConfigured, getCurrentUser, signIn, signOut } from "./auth.js";
 import { cloudLoad, cloudSave, cloudDelete } from "./cloud.js";
 import { extractResumeDetails, mergeResumeDetails } from "./lib/resume-profile.mjs";
+import { analyzeResume } from "./lib/ats-check.mjs";
+import { scoreResume } from "./lib/match-score.mjs";
+import { applyTailoring, renderResumePdf } from "./lib/tailored-resume.mjs";
 
 // Point pdf.js at its local worker (bundled in the extension).
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.min.mjs");
@@ -55,6 +58,10 @@ const STRUCTURED_IDS = [
   "transgender",
   "firstGen",
   "caretaker",
+  // Answer Studio
+  "salaryRole1", "salaryAmount1", "salaryRole2", "salaryAmount2", "salaryRole3", "salaryAmount3",
+  "noticePeriod", "startAvailability", "relocation", "workArrangement", "clearance",
+  "over18", "preferredName", "pronouns", "defaultSource",
 ];
 
 // Grab the structured element for a given key.
@@ -132,18 +139,44 @@ async function extractPdfText(file) {
   }
 
   let text = "";
+  let rows = 0;
+  let splitRows = 0;
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     text += content.items.map(item => `${item.str || ""}${item.hasEOL ? "\n" : " "}`).join("") + "\n";
+    // Layout signal for the ATS check: rows where text sits in two separate
+    // blocks far apart (side-by-side columns or tables).
+    const width = page.getViewport({ scale: 1 }).width || 612;
+    const byRow = new Map();
+    for (const item of content.items) {
+      if (!item.str?.trim() || !item.transform) continue;
+      const y = Math.round(item.transform[5] / 3);
+      const list = byRow.get(y) || [];
+      list.push({ x: item.transform[4], end: item.transform[4] + (item.width || 0), len: item.str.trim().length });
+      byRow.set(y, list);
+    }
+    for (const list of byRow.values()) {
+      rows++;
+      list.sort((a, b) => a.x - b.x);
+      for (let k = 1; k < list.length; k++) {
+        const left = list.slice(0, k).reduce((n, it) => n + it.len, 0);
+        const right = list.slice(k).reduce((n, it) => n + it.len, 0);
+        if (list[k].x - list[k - 1].end > width * 0.12 && left >= 12 && right >= 12) { splitRows++; break; }
+      }
+    }
     const annotations = await page.getAnnotations();
     text += annotations
       .filter(annotation => annotation.subtype === "Link" && /^https?:\/\//i.test(annotation.url || ""))
       .map(annotation => annotation.url).join("\n") + "\n";
   }
+  lastPdfLayout = { pages: pdf.numPages, splitRowRatio: rows ? Math.round((splitRows / rows) * 100) / 100 : 0 };
   await pdf.destroy();
   return text.trim();
 }
+
+// Layout facts from the last PDF read (for the ATS check).
+let lastPdfLayout = null;
 
 // ---------- DOCX extraction ----------
 // .docx files are a zip archive containing word/document.xml with the text
@@ -201,7 +234,7 @@ async function readResumeFile(file) {
       showStatus("Couldn't extract text from this Word document. Please paste your resume text below.", "error");
       return null;
     }
-    return { text, type: isDocx ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf" };
+    return { text, type: isDocx ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf", layout: isDocx ? null : lastPdfLayout };
   } catch (err) {
     console.error("[Hiresprint] Resume import failed:", err?.stack || err?.message || err);
     if (err?.code === "PROTECTED") {
@@ -269,9 +302,9 @@ async function handleResumeUpload(event, replaceId = null) {
   let entry;
   if (replaceId) {
     entry = resumes.find((r) => r.id === replaceId);
-    Object.assign(entry, { text: read.text, fileName: file.name, fileType: read.type, updatedAt: Date.now() });
+    Object.assign(entry, { text: read.text, fileName: file.name, fileType: read.type, layout: read.layout, updatedAt: Date.now() });
   } else {
-    entry = { id: newResumeId(), name: defaultResumeName(file.name), text: read.text, fileName: file.name, fileType: read.type, updatedAt: Date.now() };
+    entry = { id: newResumeId(), name: defaultResumeName(file.name), text: read.text, fileName: file.name, fileType: read.type, layout: read.layout, updatedAt: Date.now() };
     resumes.push(entry);
     if (!defaultResumeId) defaultResumeId = entry.id;
   }
@@ -379,7 +412,13 @@ function renderResumeList() {
     del.title = "Delete this resume";
     del.addEventListener("click", () => deleteResume(resume.id));
 
-    row.append(name, def, replace, del);
+    const ats = document.createElement("button");
+    ats.type = "button";
+    ats.textContent = "ATS check";
+    ats.title = "Check how applicant tracking systems read this resume";
+    ats.addEventListener("click", () => toggleAtsReport(resume, row));
+
+    row.append(name, def, ats, replace, del);
     row.dataset.id = resume.id;
     els.resumeList.appendChild(row);
   }
@@ -509,6 +548,194 @@ async function initCoverLetter() {
   await show();
 }
 
+// ---------- Tailor resume ----------
+
+let tailorState = null; // { resume, job, url, result, accept: { summary, bullets: Set } }
+
+function resetTailor() {
+  tailorState = null;
+  const box = document.getElementById("tailorResult");
+  if (box) { box.replaceChildren(); box.classList.add("hidden"); }
+  const btn = document.getElementById("tailorBtn");
+  if (btn) { btn.disabled = false; btn.textContent = "✨ Tailor this resume for the job"; }
+}
+
+function bytesToBase64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+function tailoredText() {
+  const { resume, result, accept } = tailorState;
+  return applyTailoring(resume.text, {
+    summary: accept.summary ? result.summary : "",
+    bullets: result.bullets.filter((_, i) => accept.bullets.has(i)),
+  });
+}
+
+function tailoredFileName() {
+  const { structured } = { structured: readStructured() };
+  const who = [structured.firstName, structured.lastName].filter(Boolean).join("_") || "Resume";
+  const company = String(tailorState.job.company || "").replace(/^.* @ /, "").replace(/[^\w]+/g, "_").replace(/^_|_$/g, "").slice(0, 40);
+  return `${who}_Resume${company ? `_${company}` : ""}.pdf`.replace(/\s+/g, "_");
+}
+
+async function runTailor(regenerate = false) {
+  const resume = selectedResume();
+  if (!resume || !lastJobContext) return;
+  const btn = document.getElementById("tailorBtn");
+  btn.disabled = true;
+  btn.textContent = "Tailoring… (about 10–20 seconds)";
+  try {
+    const result = await chrome.runtime.sendMessage({
+      type: "TAILOR_RESUME", resumeId: resume.id, jobContext: lastJobContext, url: lastPick?.url, regenerate,
+    });
+    if (result?.error) throw new Error(result.error);
+    tailorState = {
+      resume, job: lastJobContext, url: lastPick?.url, result,
+      accept: { summary: Boolean(result.summary), bullets: new Set(result.bullets.map((_, i) => i)) },
+    };
+    renderTailor();
+  } catch (err) {
+    showStatus(`Couldn't tailor: ${err.message}`, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = tailorState ? "↻ Suggest again" : "✨ Tailor this resume for the job";
+  }
+}
+
+function renderTailor() {
+  const box = document.getElementById("tailorResult");
+  const { resume, job, result, accept } = tailorState;
+  const before = scoreResume(resume.text, job).score;
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const scoreLine = el("div", "tailor-score");
+  const updateScore = () => { scoreLine.textContent = `Match: ${before}% → ${scoreResume(tailoredText(), job).score}% with the selected changes`; };
+  const items = [scoreLine];
+
+  if (result.summary) {
+    const row = el("label", "tailor-item");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = accept.summary;
+    cb.addEventListener("change", () => { accept.summary = cb.checked; updateScore(); });
+    const body = el("div");
+    body.append(el("div", "tailor-kind", "Summary"), el("div", "tailor-new", result.summary));
+    row.append(cb, body);
+    items.push(row);
+  }
+  result.bullets.forEach((b, i) => {
+    const row = el("label", "tailor-item");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = accept.bullets.has(i);
+    cb.addEventListener("change", () => { if (cb.checked) accept.bullets.add(i); else accept.bullets.delete(i); updateScore(); });
+    const body = el("div");
+    body.append(el("div", "tailor-new", b.improved), el("div", "tailor-old", b.original));
+    row.append(cb, body);
+    items.push(row);
+  });
+  if (result.gaps?.length) items.push(el("p", "hint tailor-gaps", `Not shown on your resume (add only if true): ${result.gaps.join(", ")}`));
+
+  const actions = el("div", "tailor-actions");
+  const copy = el("button", "btn-secondary", "Copy changes");
+  copy.type = "button";
+  copy.addEventListener("click", async () => {
+    const parts = [];
+    if (accept.summary && result.summary) parts.push(`SUMMARY\n${result.summary}`);
+    for (const [i, b] of result.bullets.entries()) if (accept.bullets.has(i)) parts.push(`• ${b.improved}\n  (replaces: ${b.original})`);
+    await navigator.clipboard.writeText(parts.join("\n\n"));
+    showStatus("Copied — paste the changes into your own resume document.", "success");
+  });
+  const download = el("button", "btn-secondary", "Download PDF");
+  download.type = "button";
+  download.addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([renderResumePdf(tailoredText())], { type: "application/pdf" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = tailoredFileName(); a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+  const use = el("button", "btn-primary", "Use for this application");
+  use.type = "button";
+  use.addEventListener("click", async () => {
+    const text = tailoredText();
+    const res = await chrome.runtime.sendMessage({
+      type: "SAVE_TAILORED", jobContext: job, url: tailorState.url, baseResumeId: resume.id,
+      fileName: tailoredFileName(), data: bytesToBase64(renderResumePdf(text)), text,
+    });
+    if (res?.error) return showStatus(`Couldn't save: ${res.error}`, "error");
+    showStatus("Saved. Autofill will attach this tailored resume to this job's application.", "success");
+    updateTailoredStatus();
+  });
+  actions.append(copy, download, use);
+  items.push(actions, el("div", "hint", "The PDF uses a clean, single-column, ATS-friendly layout. To keep your own design, copy the changes into your document instead."));
+  box.replaceChildren(...items);
+  box.classList.remove("hidden");
+  updateScore();
+  updateTailoredStatus();
+}
+
+async function updateTailoredStatus() {
+  const status = document.getElementById("tailoredStatus");
+  if (!status || !lastJobContext) return;
+  const t = await chrome.runtime.sendMessage({ type: "GET_TAILORED", jobContext: lastJobContext, url: lastPick?.url }).catch(() => null);
+  status.classList.toggle("hidden", !t);
+  if (!t) return;
+  status.replaceChildren();
+  const text = document.createElement("span");
+  text.textContent = `📎 This job will get: ${t.fileName}`;
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.className = "btn-link";
+  undo.textContent = "Use original instead";
+  undo.addEventListener("click", async () => {
+    await chrome.runtime.sendMessage({ type: "CLEAR_TAILORED", jobContext: lastJobContext, url: lastPick?.url });
+    updateTailoredStatus();
+  });
+  status.append(text, " ", undo);
+}
+
+// ---------- ATS check ----------
+
+function toggleAtsReport(resume, row) {
+  const existing = row.parentElement.querySelector(`.ats-report[data-id="${CSS.escape(resume.id)}"]`);
+  if (existing) return existing.remove();
+  const { score, checks } = analyzeResume(resume.text, { fileName: resume.fileName, layout: resume.layout });
+  const box = document.createElement("div");
+  box.className = "ats-report";
+  box.dataset.id = resume.id;
+  const head = document.createElement("div");
+  head.className = "ats-head";
+  const grade = score >= 85 ? "good" : score >= 65 ? "ok" : "poor";
+  head.innerHTML = `<b class="ats-score ${grade}"></b><span></span>`;
+  head.querySelector("b").textContent = `${score}/100`;
+  head.querySelector("span").textContent = grade === "good" ? "ATS-friendly" : grade === "ok" ? "A few fixes will help" : "Needs work before applying";
+  box.appendChild(head);
+  const order = { fail: 0, warn: 1, pass: 2 };
+  for (const c of [...checks].sort((a, b) => order[a.status] - order[b.status])) {
+    const item = document.createElement("div");
+    item.className = `ats-item ${c.status}`;
+    const title = document.createElement("div");
+    title.className = "ats-title";
+    title.textContent = `${c.status === "pass" ? "✓" : c.status === "warn" ? "!" : "✕"} ${c.title}`;
+    item.appendChild(title);
+    if (c.detail && c.status !== "pass") {
+      const detail = document.createElement("div");
+      detail.className = "ats-detail";
+      detail.textContent = c.detail;
+      item.appendChild(detail);
+    }
+    box.appendChild(item);
+  }
+  if (!resume.layout && /pdf/i.test(resume.fileType || resume.fileName || "")) {
+    const note = document.createElement("div");
+    note.className = "ats-detail";
+    note.textContent = "Tip: click Replace and choose this file again to include the layout check.";
+    box.appendChild(note);
+  }
+  const anchor = row.nextElementSibling?.classList.contains("nofile") ? row.nextElementSibling : row;
+  anchor.after(box);
+}
+
 // ---------- Match for the open job ----------
 
 // Resume chosen for the open job: the auto pick unless the user changed it.
@@ -528,15 +755,24 @@ async function refreshMatch() {
     return;
   }
   const host = (() => { try { return new URL(tab.url).hostname; } catch { return ""; } })();
-  const pick = await chrome.runtime.sendMessage({ type: "PICK_RESUME", jobContext, host, url: tab.url }).catch(() => null);
+  const pick = await chrome.runtime.sendMessage({ type: "PICK_RESUME", jobContext, host, url: tab.url, noFetch: jobContext.noFetch === true }).catch(() => null);
   if (!pick?.resumeId) {
     els.matchCard.classList.add("hidden");
     return;
   }
-  if (lastJobContext?.title !== jobContext.title || lastPick?.resumeId !== pick.resumeId) selectedResumeId = null;
+  const sameJob = lastJobContext?.title === jobContext.title;
+  if (!sameJob || lastPick?.resumeId !== pick.resumeId) selectedResumeId = null;
+  if (!sameJob) resetTailor();
   lastPick = { ...pick, host, url: tab.url };
-  lastJobContext = pick.jobContext || jobContext;
+  lastJobContext = { ...(pick.jobContext || jobContext), noFetch: jobContext.noFetch === true };
   renderMatch();
+  updateTailoredStatus();
+  // "Tailor my resume" was clicked on the page's match badge.
+  const { pendingTailor } = await chrome.storage.local.get("pendingTailor");
+  if (pendingTailor && Date.now() - pendingTailor.at < 120000 && pendingTailor.url === tab.url) {
+    await chrome.storage.local.remove("pendingTailor");
+    runTailor();
+  }
 }
 
 function renderMatch() {
@@ -553,6 +789,7 @@ function renderMatch() {
     radio.checked = s.id === chosenId;
     radio.addEventListener("change", () => {
       selectedResumeId = s.id;
+      resetTailor();
       chrome.runtime.sendMessage({ type: "REMEMBER_RESUME_CHOICE", jobContext: lastJobContext, host: pick.host, url: pick.url, resumeId: s.id }).catch(() => {});
       renderMatch();
     });
@@ -620,7 +857,7 @@ async function ensureContentScript(tabId) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["content-ui.js", "content.js"],
+        files: ["content-ui.js", "content-match.js", "content.js"],
       });
       await new Promise((r) => setTimeout(r, 300));
       return true;
@@ -1304,6 +1541,7 @@ const manifestVersion = chrome.runtime.getManifest?.()?.version;
 if (versionLabel && manifestVersion) versionLabel.textContent = `· v${manifestVersion}`;
 
 els.save.addEventListener("click", () => save().catch(err => console.error("[Hiresprint] Save failed:", err.message)));
+document.getElementById("studioSave")?.addEventListener("click", () => save().catch(err => console.error("[Hiresprint] Save failed:", err.message)));
 els.fill.addEventListener("click", fillForm);
 els.applyAll.addEventListener("click", applyAll);
 els.resumeFile.addEventListener("change", (e) => handleResumeUpload(e));
@@ -1316,6 +1554,15 @@ els.deleteData.addEventListener("click", deleteMyData);
 initFabToggle();
 initAutoFillToggle();
 initFeedback();
+document.getElementById("tailorBtn")?.addEventListener("click", () => runTailor(Boolean(tailorState)));
+chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.pendingTailor?.newValue) refreshMatch(); });
+(async () => {
+  const toggle = document.getElementById("matchBadgeToggle");
+  if (!toggle) return;
+  const { matchBadgeEnabled } = await chrome.storage.local.get("matchBadgeEnabled");
+  toggle.checked = matchBadgeEnabled !== false;
+  toggle.addEventListener("change", () => chrome.storage.local.set({ matchBadgeEnabled: toggle.checked }));
+})().catch(() => {});
 initCoverLetter().catch((err) => console.error("[Hiresprint] Could not load cover letter settings:", err));
 refreshFillAvailability();
 

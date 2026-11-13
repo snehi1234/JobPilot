@@ -49,7 +49,11 @@ make mistakes.
 **Why Hiresprint:**
 • Uses profile and job context to suggest answers
 • Handles common text fields, dropdowns, and repeated work/education sections
-• Match score for each of your resumes against the job description
+• Match score for each of your resumes — right on LinkedIn, Indeed, Workday, and company job pages
+• Tailor your resume to a job in one click (rewrites your own bullets — never invents experience)
+• ATS check: see how applicant tracking systems read your resume, with fixes
+• Answer Studio: set salary, notice period, relocation and other common answers once
+• Workday support: dropdowns, searches, dates, and multi-step pages
 • Colour-coded fills, a review checklist, and one-click undo
 • Learns from your corrections and reuses answers you save
 • Drafts long answers you can shorten or expand

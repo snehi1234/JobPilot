@@ -40,7 +40,8 @@ function jpJobOnPage() {
   // Company career sites and ATS postings: only before the application form
   // is open (the checklist shows the match while filling).
   if (typeof looksLikeJobApplication !== "function" || !looksLikeJobApplication()) return null;
-  if (typeof jpFormVisible === "function" && jpFormVisible()) return null;
+  const workdayPosting = !!document.querySelector("[data-automation-id='jobPostingDescription']");
+  if (!workdayPosting && typeof jpFormVisible === "function" && jpFormVisible()) return null;
   const ctx = typeof scrapeJobContext === "function" ? scrapeJobContext() : null;
   if (!ctx?.description || ctx.description.length < 300) return null;
   return { title: ctx.title, company: ctx.company, description: ctx.description };

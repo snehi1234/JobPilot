@@ -22,6 +22,7 @@ $filesToCopy = @(
   "background.js",
   "content-ui.js",
   "content-match.js",
+  "content-workday.js",
   "content.js",
   "config.js",
   "auth.js",

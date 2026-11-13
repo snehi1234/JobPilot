@@ -333,6 +333,7 @@ function scrapeJobContext() {
   };
 
   const title = pick([
+    "[data-automation-id='jobPostingHeader']",
     "h1.app-title",
     ".job__title h1",
     "[class*='posting-headline'] h2",
@@ -380,6 +381,7 @@ function applicationSourceHint() {
 // Grab the job description text so the AI can tailor answers to this role.
 function scrapeJobDescription() {
   const candidates = [
+    "[data-automation-id='jobPostingDescription']",
     "[class*='job-description']",
     "[class*='jobDescription']",
     "[class*='posting-description']",
@@ -425,6 +427,9 @@ function detectFields() {
     labelOccurrence.set(key, n + 1);
     return n;
   };
+
+  // 0) Workday's custom widgets (dropdown buttons, search prompts, dates).
+  if (typeof jpIsWorkday === "function" && jpIsWorkday()) index = jpWorkdayDetect(fields, claimed, index, nextLabelIndex);
 
   // 1) Radio groups — one field per group (by name).
   const radioGroups = {};
@@ -608,6 +613,10 @@ function detectFields() {
     const rawLabel = getLabelForElement(el).trim();
     if (/^select\.{0,3}$/i.test(rawLabel)) return;
     if (el.readOnly && !rawLabel) return;
+    // Site search bars ("Search for jobs or keywords") aren't application fields.
+    const hints = `${rawLabel} ${el.placeholder || ""} ${el.getAttribute("aria-label") || ""} ${el.name || ""} ${el.id || ""} ${el.getAttribute("data-automation-id") || ""}`;
+    if ((el.getAttribute("type") || "").toLowerCase() === "search" || el.getAttribute("role") === "searchbox" ||
+        el.closest("[role='search'], header, nav") || /keywordSearch|searchInput|search for jobs|search jobs|job search|^search\b/i.test(hints.trim())) return;
 
     const id = String(index++);
     el.setAttribute(FIELD_ATTR, id);
@@ -936,6 +945,13 @@ function jpElementsForKind(kind) {
       return jpQueryAll("input[role='combobox']").filter(isComboboxInput);
     case "checkbox":
       return jpQueryAll("input[type='checkbox']");
+    case "wd-dropdown":
+      return jpQueryAll("button[aria-haspopup='listbox']");
+    case "wd-prompt":
+      return jpQueryAll("[data-automation-id='multiSelectContainer'] input, input[data-automation-id='searchBox']");
+    case "wd-date":
+      return jpQueryAll("input[data-automation-id$='dateSectionMonth-input']")
+        .map((m) => m.closest("[data-automation-id='dateInputWrapper'], [data-automation-id^='formField'], div") || m.parentElement);
     case "text":
       return jpQueryAll("input, textarea").filter((el) => !isComboboxInput(el));
     default:
@@ -950,7 +966,7 @@ function jpFindByLabelFallback(meta) {
 
   const candidates = jpElementsForKind(meta.kind).filter(isVisible);
   const matches = candidates.filter(
-    (el) => (meta.kind === "checkbox" ? checkboxLabel(el) : getLabelForElement(el)).trim().toLowerCase() === wantLabel
+    (el) => (meta.kind === "checkbox" ? checkboxLabel(el) : meta.kind.startsWith("wd-") ? jpWdLabel(el) : getLabelForElement(el)).trim().toLowerCase() === wantLabel
   );
   if (matches.length === 0) return null;
   return matches[meta.labelIndex] ?? null;
@@ -1012,7 +1028,10 @@ async function applyAnswers(suggestions) {
         if (!el) throw new Error("The field was removed or changed.");
         jpSnapshot(meta.kind === "checkbox" ? "checkbox" : "value", el);
         markEl = el;
-        if (meta.kind === "combobox") ok = await fillCombobox(el, value);
+        if (meta.kind === "wd-dropdown") ok = await jpFillWorkdayDropdown(el, value);
+        else if (meta.kind === "wd-prompt") ok = await jpFillWorkdayPrompt(el, value);
+        else if (meta.kind === "wd-date") ok = await jpFillWorkdayDate(el, value);
+        else if (meta.kind === "combobox") ok = await fillCombobox(el, value);
         else if (meta.kind === "checkbox") ok = fillCheckbox(el, value);
         else if (el.tagName === "SELECT") ok = fillNativeSelect(el, value);
         else {
@@ -1778,6 +1797,10 @@ async function runAutofillFromButton(isAuto = false) {
       fields = detectFields();
     }
     if (fields.length) jpOpenedApplyForm = false;
+    // Workday dropdowns list their options only while open.
+    if (typeof jpWorkdayReadOptions === "function" && fields.some((f) => fieldRegistry[f.id]?.kind === "wd-dropdown")) {
+      await jpWorkdayReadOptions(fields);
+    }
     console.log(
       `[Hiresprint] Detected ${fields.length} fillable field(s):`,
       fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))
@@ -1796,13 +1819,15 @@ async function runAutofillFromButton(isAuto = false) {
         // If the link loads a new page, finish there (see maybeShowFab).
         try { sessionStorage.setItem(JP_PENDING_KEY, String(Date.now())); } catch { /* storage blocked */ }
         apply.click();
-        for (let waited = 0; waited < 10000 && !jpFormVisible(); waited += 500) await sleep(500);
+        for (let waited = 0; waited < 10000 && !jpFormVisible() && !(typeof jpWorkdayHint === "function" && jpWorkdayHint()); waited += 500) await sleep(500);
         if (jpFormVisible()) {
           try { sessionStorage.removeItem(JP_PENDING_KEY); } catch { /* storage blocked */ }
           setTimeout(() => runAutofillFromButton(false), 0); // after this run releases its lock
           return;
         }
       }
+      const wdHint = typeof jpWorkdayHint === "function" ? jpWorkdayHint() : "";
+      if (wdHint) { jpToast(wdHint, "note"); return; }
       jpToast("No application form found here. Open the job's application form, then click Autofill.", "note",
         { label: "Report this page", run: () => jpOpenFeedback("site") });
       return;
@@ -2179,6 +2204,7 @@ function jpFindApplyControl() {
   const candidates = jpQueryAll("a, button, [role='tab'], [role='button']").filter((el) => {
     const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
     if (!text || text.length > 40 || !isVisible(el)) return false;
+    if (el.getAttribute("data-automation-id") === "adventureButton") return true; // Workday's Apply opens a chooser on the same page
     if (!/^(apply( now| here| online)?|apply (for|to) (this|the) (job|position|role)|application|start (your )?application|i'?m interested)$/i.test(text)) return false;
     const href = el.getAttribute("href");
     if (el.getAttribute("aria-selected") === "true" || el.getAttribute("aria-current")) return false;

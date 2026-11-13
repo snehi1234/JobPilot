@@ -33,7 +33,7 @@ async function reinjectContentScripts() {
   await Promise.all(tabs.map((tab) =>
     chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
-      files: ["content-ui.js", "content-match.js", "content.js"],
+      files: ["content-ui.js", "content-match.js", "content-workday.js", "content.js"],
     }).catch(() => {}) // restricted pages (e.g. the Web Store) can't be scripted
   ));
 }

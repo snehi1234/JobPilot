@@ -857,7 +857,7 @@ async function ensureContentScript(tabId) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["content-ui.js", "content-match.js", "content.js"],
+        files: ["content-ui.js", "content-match.js", "content-workday.js", "content.js"],
       });
       await new Promise((r) => setTimeout(r, 300));
       return true;

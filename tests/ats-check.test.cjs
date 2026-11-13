@@ -66,3 +66,15 @@ test("scanned or symbol-heavy resumes are caught", async () => {
   const noLayout = analyzeResume(GOOD, {});
   assert.equal(noLayout.checks.some((c) => c.id === "layout" || c.id === "filename"), false, "unknown facts are skipped, not guessed");
 });
+
+test("real-world formats: spaced phone numbers and inline or named skills sections", async () => {
+  const { analyzeResume } = await load();
+  const spaced = GOOD.replace("+1 (202) 555-0142", "+1   (425) 310 - 5258").replace("\nSkills\n", "\nTechnical Skills & Tools: ");
+  const by = Object.fromEntries(analyzeResume(spaced).checks.map((c) => [c.id, c.status]));
+  assert.equal(by.contact, "pass");
+  assert.equal(by.sections, "pass");
+  const expertise = GOOD.replace("\nSkills\n", "\nTechnical Expertise\n");
+  assert.equal(analyzeResume(expertise).checks.find((c) => c.id === "sections").status, "pass");
+  const bulletOnly = GOOD.replace("\nSkills\n", "\n• Built skills in public speaking\n");
+  assert.equal(analyzeResume(bulletOnly).checks.find((c) => c.id === "sections").status, "warn", "a bullet mentioning skills isn't a heading");
+});

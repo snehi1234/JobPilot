@@ -26,6 +26,11 @@ Hiresprint is a Chrome extension that uses an LLM to fill out online job applica
 - **Learns from corrections.** When you change a filled answer, Hiresprint reuses your version next time instead of asking the AI. Answers are remembered per resume.
 - **Long answers.** AI drafts for "Why us?" style questions can be made shorter or longer, and saved to a personal answer library that is reused on similar questions.
 - **Cover letters.** Choose in the panel: an AI-written letter for each job (about 250 words from the resume picked for that job and the job description), your own file for every job, or none. Text boxes get the letter pasted in; upload fields get the file, or a PDF generated in the browser. The checklist has an **Edit** button, and AI letters are cached per job and resume.
+- **Answer Studio.** Exact answers for the questions every application asks — salary (with per-role overrides by job-title keyword), notice period, start date, relocation, work arrangement, clearance, 18+, preferred name, pronouns, and a default "How did you hear about us?" — filled before memory or AI.
+- **ATS check.** An on-device report for each resume: readable text, single-column layout, contact details, standard section headings, dates, length, quantified bullets, action verbs, and file name.
+- **Match badge on job postings.** On LinkedIn, Indeed, Glassdoor, Workday, and company career pages, a badge shows how well each resume matches the job (from the page's own text, nothing fetched or sent).
+- **Tailor resume.** `/api/tailor` suggests rewrites of the resume's own bullets and a summary for a job. The server drops anything ungrounded (bullets not on the resume, new numbers, skills not on the resume). Users accept or reject each change, see the match score before and after, copy the changes, or generate a clean single-column PDF that is attached to that job's application only.
+- **Workday.** Dropdown buttons (options read by opening them), search prompts (including categories), split month/year dates, multi-step pages, and guidance on the sign-in and "how to apply" pages.
 - **Feedback, built in.** "💬 Feedback" in the side panel and "Something wrong? Report it" on the checklist (and on error messages) send a report with optional page diagnostics — never the user's answers, resume, or profile. Limited to 5 reports per user per day.
 - **Admin page.** `/admin` on the backend lists reports with status counts, filters, search, top problem sites and versions, and lets you mark reports In progress / Fixed / Won't fix or reply by email (when the user allowed it). Sign-in is Google; only verified emails in the `ADMIN_EMAILS` setting get access.
 - **Multi-step forms.** After a fill, new fields that appear on the next step (or the next page within 30 minutes) trigger a "Fill this step" prompt.
@@ -46,6 +51,7 @@ Hiresprint is a Chrome extension that uses an LLM to fill out online job applica
 │  /api/generate       fields + profile + job context → suggestions        │
 │  /api/draft          shorten / expand / rewrite a long answer            │
 │  /api/cover-letter   job + resume → ~250-word cover letter               │
+│  /api/tailor         resume + job → grounded bullet rewrites             │
 │  /api/feedback       user bug reports and ideas                          │
 │  /admin              admin page (reports); /api/admin-feedback API       │
 │  /api/profile        per-user profile sync (GET / PUT / DELETE)          │

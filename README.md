@@ -5,7 +5,7 @@ Hiresprint is a Chrome extension that uses an LLM to fill out online job applica
 > **Status:** Version 0.1.2 is submitted to the Chrome Web Store and pending review.
 > Store link (active once published): https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep
 
-![Hiresprint filling an application](store-assets/hiresprint-autofill-1280x800.png)
+![Hiresprint filling an application](store-assets/hiresprint-1-autofill-1280x800.png)
 
 ## Features
 
@@ -31,9 +31,13 @@ Hiresprint is a Chrome extension that uses an LLM to fill out online job applica
 - **Match badge on job postings.** On LinkedIn, Indeed, Glassdoor, Workday, and company career pages, a badge shows how well each resume matches the job (from the page's own text, nothing fetched or sent).
 - **Tailor resume.** `/api/tailor` suggests rewrites of the resume's own bullets and a summary for a job. The server drops anything ungrounded (bullets not on the resume, new numbers, skills not on the resume). Users accept or reject each change, see the match score before and after, copy the changes, or generate a clean single-column PDF that is attached to that job's application only.
 - **Workday.** Dropdown buttons (options read by opening them), search prompts (including categories), split month/year dates, multi-step pages, and guidance on the sign-in and "how to apply" pages.
+- **iCIMS, SmartRecruiters, Taleo, SuccessFactors** (`content-ats.js`). iCIMS forms inside the same-origin `icims_content_iframe` are read and filled from the top frame (one button); SmartRecruiters' One Click `spl-*` web components (open shadow roots, labels on the component, screening questions); SuccessFactors pick lists (`role="combobox"` widgets) and Career Site Builder postings on employer domains; Taleo's legacy forms and "Apply Online" button. Posting text from each platform feeds the match badge and the AI. Sign-in, account, iCIMS email, and security-check steps show a hint (and fill the email when asked) instead of filling; passwords are never filled.
 - **Feedback, built in.** "💬 Feedback" in the side panel and "Something wrong? Report it" on the checklist (and on error messages) send a report with optional page diagnostics — never the user's answers, resume, or profile. Limited to 5 reports per user per day.
 - **Admin page.** `/admin` on the backend lists reports with status counts, filters, search, top problem sites and versions, and lets you mark reports In progress / Fixed / Won't fix or reply by email (when the user allowed it). Sign-in is Google; only verified emails in the `ADMIN_EMAILS` setting get access.
 - **Multi-step forms.** After a fill, new fields that appear on the next step (or the next page within 30 minutes) trigger a "Fill this step" prompt.
+- **Getting started + practice form.** The side panel shows a five-step checklist (sign in, upload a resume, check Quick Details, try the practice form, first real autofill). `/practice.html` on the backend is a realistic application that never submits anything.
+- **Rating prompt.** After three autofills that filled at least three fields (practice runs excluded), the checklist and side panel ask for a store rating, with Later (two-week snooze), "Not really — tell us why" (opens feedback), and Don't ask again.
+- **Usage metrics.** The extension sends anonymous, batched usage events (fixed names such as `autofill`, `tailor`, `panel_session`, plus counts, durations, and a coarse platform like `workday` — never URLs or form contents) to `/api/events`, with a random install id and the account when signed in. Removing the extension opens `/goodbye.html` (uninstall reason). The admin page's **Metrics** tab shows accounts, installs, DAU/WAU/MAU, autofills and fields filled, estimated time saved, panel session length, active days, activation funnel, weekly retention, feature usage, autofills by job site, uninstall reasons, rating-prompt results, and versions. Users can turn usage stats off in the panel; events are kept 180 days.
 
 ## Architecture
 
@@ -53,7 +57,9 @@ Hiresprint is a Chrome extension that uses an LLM to fill out online job applica
 │  /api/cover-letter   job + resume → ~250-word cover letter               │
 │  /api/tailor         resume + job → grounded bullet rewrites             │
 │  /api/feedback       user bug reports and ideas                          │
-│  /admin              admin page (reports); /api/admin-feedback API       │
+│  /api/events         anonymous usage events; uninstall redirect          │
+│  /admin              admin page (reports + metrics); /api/admin-feedback │
+│  /practice.html      practice application for first-time users          │
 │  /api/profile        per-user profile sync (GET / PUT / DELETE)          │
 │  /api/health         config + available model check                      │
 │                                                                          │

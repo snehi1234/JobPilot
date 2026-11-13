@@ -40,8 +40,12 @@ function harness(backendUrl, responses) {
       runtime: {
         onInstalled: { addListener() {} },
         onMessage: { addListener: (listener) => { onMessage = listener; } },
+        getManifest: () => ({ version: "0.0.0" }),
       },
     },
+    setTimeout,
+    clearTimeout,
+    URL,
   });
   const engine = readFileSync(path.join(__dirname, "..", "lib", "answer-engine.mjs"), "utf8").replace(/^export /gm, "");
   vm.runInContext(engine, context);
@@ -49,6 +53,8 @@ function harness(backendUrl, responses) {
   vm.runInContext(matcher, context);
   const jd = readFileSync(path.join(__dirname, "..", "lib", "job-description.mjs"), "utf8").replace(/^export /gm, "");
   vm.runInContext(jd, context);
+  const tel = readFileSync(path.join(__dirname, "..", "lib", "telemetry.mjs"), "utf8").replace(/^export /gm, "");
+  vm.runInContext(tel, context);
   const source = readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
   vm.runInContext(source.replace(/^import .*;\r?$/gm, ""), context);
   return {

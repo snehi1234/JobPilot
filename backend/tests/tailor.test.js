@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sanitizeTailoring, buildTailorPrompt } from "../lib/tailor.js";
+import { sanitizeTailoring, buildTailorPrompt, droppedTech } from "../lib/tailor.js";
 
 const RESUME = `Alex Example
 Experience
@@ -45,4 +45,29 @@ test("tailor prompt carries the job and the honesty rules", () => {
   assert.match(p, /Company: Acme/);
   assert.match(p, /copied EXACTLY/);
   assert.match(p, /Never add employers/);
+});
+
+test("rewrites that drop a named technology are rejected; whole wrapped bullets are used", () => {
+  const resume = `Sam Sample
+Experience
+Example Corp — Jul 2023 – Aug 2024
+●   Built core components of a secure financial platform   (C#, .NET Core 6, Python, Vue.js) for stock and fund - transfer
+operations, designing the data - access layer for testability.
+●   Designed the real - time order pipeline using RabbitMQ for multi - store order consolidation across stores.`;
+  const raw = { bullets: [
+    { original: "Built core components of a secure financial platform (C#, .NET Core 6, Python, Vue.js) for stock and fund-transfer operations",
+      improved: "Engineered a secure financial transactions platform with a testable data-access layer for stock and fund transfers." },
+    { original: "Built core components of a secure financial platform (C#, .NET Core 6, Python, Vue.js)",
+      improved: "Engineered a secure financial platform in C#, .NET Core 6, Python, and Vue.js with a testable data-access layer for stock and fund transfers." },
+    { original: "Designed the real-time order pipeline using RabbitMQ for multi-store order consolidation",
+      improved: "Built an event-driven order-routing pipeline for multi-store consolidation." },
+  ] };
+  const out = sanitizeTailoring(raw, resume, { wholeBullets: true });
+  assert.equal(out.bullets.length, 1);
+  assert.match(out.bullets[0].improved, /C#, \.NET Core 6/);
+  assert.match(out.bullets[0].line, /operations, designing the data - access layer for testability\.$/, "the whole bullet, not just its first line");
+  // Older extension versions only replace single lines, so they get the first line.
+  assert.match(sanitizeTailoring(raw, resume).bullets[0].line, /fund - transfer$/);
+  assert.deepEqual(droppedTech("Used RabbitMQ and JWT on Azure (Python, C#, React, MySQL)", "Used RabbitMQ, JWT, Python, C#, React and MySQL"), []);
+  assert.deepEqual(droppedTech("Built it in Python (Docker, Kubernetes, and Kafka)", "Built it with Docker and Kubernetes"), ["Kafka"]);
 });

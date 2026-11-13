@@ -63,6 +63,28 @@
         <button id="feedbackSend" class="btn-primary" type="button">Send</button>
       </div>
     </section>
+    <!-- First-run checklist; hidden once complete or dismissed -->
+    <section id="startCard" class="card start-card hidden">
+      <div class="start-head"><h2>Getting started</h2><button id="startHide" class="link-btn" type="button">Hide</button></div>
+      <p class="hint" id="startProgress"></p>
+      <ol class="start-list">
+        <li data-step="signin">Sign in with Google</li>
+        <li data-step="resume">Upload your resume <span class="hint">— Quick Details fill in from it</span></li>
+        <li data-step="details">Check your name, email, and phone in Quick Details</li>
+        <li data-step="practice">Try Autofill on a practice application <button id="practiceBtn" class="mini-btn" type="button">Open practice form</button></li>
+        <li data-step="real">Autofill your first real application</li>
+      </ol>
+    </section>
+    <!-- Rating request after a few successful fills -->
+    <section id="rateCard" class="card rate-card hidden">
+      <h2>Is Hiresprint saving you time?</h2>
+      <p class="hint">A quick rating helps other job seekers find Hiresprint. It takes 10 seconds.</p>
+      <div class="button-row">
+        <button id="rateYes" class="btn-primary" type="button">⭐ Rate Hiresprint</button>
+        <button id="rateLater" class="btn-secondary" type="button">Later</button>
+      </div>
+      <p class="hint" style="margin: 6px 0 0;"><a href="#" id="rateNo">Not really — tell us what to fix</a> · <a href="#" id="rateNever">Don't ask again</a></p>
+    </section>
     <section class="card">
       <h2>How your data is used</h2>
       <p class="hint">
@@ -390,6 +412,10 @@
       <p class="hint">
         Permanently delete your saved profile and resume from Hiresprint.
       </p>
+      <label class="switch-label" style="margin-bottom: 10px;">
+        <input type="checkbox" id="usageStatsToggle" checked />
+        <span>Share anonymous usage stats (feature counts only — never your answers, resume, or the pages you visit)</span>
+      </label>
       <button id="deleteData" class="btn-danger" type="button">
         🗑️ Delete My Data
       </button>

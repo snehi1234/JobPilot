@@ -159,3 +159,40 @@ export async function updateFeedbackStatus(id, status) {
 export function deleteFeedbackForUser(userSub) {
   return feedbackRequest(`?user_sub=eq.${encodeURIComponent(userSub)}`, { method: "DELETE" });
 }
+
+// ---------- Usage events (admin metrics) ----------
+
+async function restRequest(path, { method = "GET", body, prefer } = {}) {
+  const { url, key } = config();
+  const headers = { apikey: key, Authorization: "Bearer " + key };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (prefer) headers.Prefer = prefer;
+  const res = await fetch(`${url}/rest/v1/${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`DB ${method} ${path.split("?")[0]} failed: ${res.status} ${text.slice(0, 160)}`);
+  }
+  if (method === "DELETE" || prefer === "return=minimal") return true;
+  return res.json();
+}
+
+export function insertEvents(rows) {
+  if (!rows.length) return Promise.resolve(true);
+  return restRequest("events", { method: "POST", body: rows, prefer: "return=minimal" });
+}
+
+export function deleteEventsForUser(userSub) {
+  return restRequest(`events?user_sub=eq.${encodeURIComponent(userSub)}`, { method: "DELETE" });
+}
+
+export function deleteEventsBefore(iso) {
+  return restRequest(`events?created_at=lt.${encodeURIComponent(iso)}`, { method: "DELETE" });
+}
+
+export function getAdminMetrics(days = 30) {
+  return restRequest("rpc/admin_metrics", { method: "POST", body: { p_days: days } });
+}

@@ -7,6 +7,16 @@ import { extractResumeDetails, mergeResumeDetails } from "./lib/resume-profile.m
 import { analyzeResume } from "./lib/ats-check.mjs";
 import { scoreResume } from "./lib/match-score.mjs";
 import { applyTailoring, renderResumePdf } from "./lib/tailored-resume.mjs";
+import { BACKEND_URL } from "./config.js";
+
+// Anonymous feature counts (see lib/telemetry.mjs); never page or profile content.
+function track(name, props = {}) {
+  try {
+    chrome.runtime.sendMessage({ type: "TRACK", name, props }).catch(() => {});
+  } catch { /* extension reloading */ }
+}
+// Lets the background measure how long the panel stays open.
+try { chrome.runtime.connect({ name: "panel" }); } catch { /* extension reloading */ }
 
 // Point pdf.js at its local worker (bundled in the extension).
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.min.mjs");
@@ -332,6 +342,7 @@ async function handleResumeUpload(event, replaceId = null) {
     }
   }
   const synced = await save();
+  if (!replaceId) track("resume_added", { count: resumes.length });
   showStatus(
     `${replaceId ? "Resume replaced" : `Added "${entry.name}"`}. Review Quick Details; fields not present in your resume stay blank. ` +
     (synced ? "Saved and synced." : "Saved on this device only; cloud sync failed.") +
@@ -592,9 +603,19 @@ async function runTailor(regenerate = false) {
       type: "TAILOR_RESUME", resumeId: resume.id, jobContext: lastJobContext, url: lastPick?.url, regenerate,
     });
     if (result?.error) throw new Error(result.error);
+    // Score each change on its own; changes that lower the match start unchecked.
+    const base = scoreResume(resume.text, lastJobContext).score;
+    const effect = (accepted) => scoreResume(applyTailoring(resume.text, accepted), lastJobContext).score - base;
+    const effects = {
+      summary: result.summary ? effect({ summary: result.summary }) : 0,
+      bullets: result.bullets.map((b) => effect({ bullets: [b] })),
+    };
     tailorState = {
-      resume, job: lastJobContext, url: lastPick?.url, result,
-      accept: { summary: Boolean(result.summary), bullets: new Set(result.bullets.map((_, i) => i)) },
+      resume, job: lastJobContext, url: lastPick?.url, result, effects,
+      accept: {
+        summary: Boolean(result.summary) && effects.summary >= 0,
+        bullets: new Set(result.bullets.map((_, i) => i).filter((i) => effects.bullets[i] >= 0)),
+      },
     };
     renderTailor();
   } catch (err) {
@@ -607,11 +628,17 @@ async function runTailor(regenerate = false) {
 
 function renderTailor() {
   const box = document.getElementById("tailorResult");
-  const { resume, job, result, accept } = tailorState;
+  const { resume, job, result, accept, effects = { bullets: [] } } = tailorState;
   const before = scoreResume(resume.text, job).score;
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const effectTag = (delta) => (delta > 0 ? el("span", "tailor-effect up", `+${delta}% match`)
+    : delta < 0 ? el("span", "tailor-effect down", `lowers match ${delta}% — unchecked`) : null);
   const scoreLine = el("div", "tailor-score");
-  const updateScore = () => { scoreLine.textContent = `Match: ${before}% → ${scoreResume(tailoredText(), job).score}% with the selected changes`; };
+  const updateScore = () => {
+    const after = scoreResume(tailoredText(), job).score;
+    scoreLine.textContent = `Match: ${before}% → ${after}% with the selected changes`;
+    scoreLine.classList.toggle("down", after < before);
+  };
   const items = [scoreLine];
 
   if (result.summary) {
@@ -620,7 +647,10 @@ function renderTailor() {
     cb.type = "checkbox"; cb.checked = accept.summary;
     cb.addEventListener("change", () => { accept.summary = cb.checked; updateScore(); });
     const body = el("div");
-    body.append(el("div", "tailor-kind", "Summary"), el("div", "tailor-new", result.summary));
+    const kind = el("div", "tailor-kind", "Summary");
+    const tag = effectTag(effects.summary || 0);
+    if (tag) kind.append(" ", tag);
+    body.append(kind, el("div", "tailor-new", result.summary));
     row.append(cb, body);
     items.push(row);
   }
@@ -631,6 +661,8 @@ function renderTailor() {
     cb.addEventListener("change", () => { if (cb.checked) accept.bullets.add(i); else accept.bullets.delete(i); updateScore(); });
     const body = el("div");
     body.append(el("div", "tailor-new", b.improved), el("div", "tailor-old", b.original));
+    const tag = effectTag(effects.bullets[i] || 0);
+    if (tag) body.append(tag);
     row.append(cb, body);
     items.push(row);
   });
@@ -700,6 +732,7 @@ function toggleAtsReport(resume, row) {
   const existing = row.parentElement.querySelector(`.ats-report[data-id="${CSS.escape(resume.id)}"]`);
   if (existing) return existing.remove();
   const { score, checks } = analyzeResume(resume.text, { fileName: resume.fileName, layout: resume.layout });
+  track("ats_check", { score });
   const box = document.createElement("div");
   box.className = "ats-report";
   box.dataset.id = resume.id;
@@ -771,6 +804,7 @@ async function refreshMatch() {
   const { pendingTailor } = await chrome.storage.local.get("pendingTailor");
   if (pendingTailor && Date.now() - pendingTailor.at < 120000 && pendingTailor.url === tab.url) {
     await chrome.storage.local.remove("pendingTailor");
+    track("badge_tailor");
     runTailor();
   }
 }
@@ -857,7 +891,7 @@ async function ensureContentScript(tabId) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
-        files: ["content-ui.js", "content-match.js", "content-workday.js", "content.js"],
+        files: ["content-ui.js", "content-match.js", "content-workday.js", "content-ats.js", "content.js"],
       });
       await new Promise((r) => setTimeout(r, 300));
       return true;
@@ -1346,6 +1380,7 @@ async function initAuth() {
   authEls.signInBtn.addEventListener("click", async () => {
     try {
       const u = await signIn({ interactive: true });
+      track("sign_in");
       renderAuth(u);
       gateContent(true);
       await loadSaved();
@@ -1565,5 +1600,90 @@ chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" &
 })().catch(() => {});
 initCoverLetter().catch((err) => console.error("[Hiresprint] Could not load cover letter settings:", err));
 refreshFillAvailability();
+
+// ---------- Getting started, rating, usage stats ----------
+
+const PRACTICE_URL = BACKEND_URL ? `${BACKEND_URL}/practice.html` : "";
+const REVIEW_URL = "https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep/reviews";
+
+async function startSteps() {
+  const s = await chrome.storage.local.get(["auth", "resumes", "uploadedResumeText", "structured", "onboardingProgress"]);
+  const st = s.structured || {};
+  const progress = s.onboardingProgress || {};
+  return {
+    signin: Boolean(s.auth?.idToken) || !isAuthConfigured(),
+    resume: (Array.isArray(s.resumes) && s.resumes.length > 0) || Boolean(s.uploadedResumeText),
+    details: Boolean(st.firstName && st.email && st.phone),
+    practice: Boolean(progress.practice),
+    real: Boolean(progress.real),
+  };
+}
+
+async function renderGettingStarted() {
+  const card = document.getElementById("startCard");
+  if (!card) return;
+  const { onboardingHidden } = await chrome.storage.local.get("onboardingHidden");
+  const steps = await startSteps();
+  const doneCount = Object.values(steps).filter(Boolean).length;
+  const total = Object.keys(steps).length;
+  card.classList.toggle("hidden", Boolean(onboardingHidden) || doneCount === total);
+  card.querySelectorAll("li[data-step]").forEach((li) => li.classList.toggle("done", Boolean(steps[li.dataset.step])));
+  document.getElementById("startProgress").textContent = `${doneCount} of ${total} done — about 2 minutes to your first autofill.`;
+}
+
+async function initGettingStarted() {
+  document.getElementById("startHide")?.addEventListener("click", async () => {
+    await chrome.storage.local.set({ onboardingHidden: true });
+    renderGettingStarted();
+  });
+  const practice = document.getElementById("practiceBtn");
+  if (practice) {
+    practice.classList.toggle("hidden", !PRACTICE_URL);
+    practice.addEventListener("click", () => {
+      track("practice_open");
+      chrome.tabs.create({ url: PRACTICE_URL });
+    });
+  }
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && ["auth", "resumes", "structured", "onboardingProgress", "uploadedResumeText"].some((k) => k in changes)) {
+      renderGettingStarted();
+    }
+  });
+  await renderGettingStarted();
+}
+
+async function renderRating() {
+  const card = document.getElementById("rateCard");
+  if (!card) return;
+  const state = await chrome.runtime.sendMessage({ type: "RATING_STATE" }).catch(() => null);
+  card.classList.toggle("hidden", !state?.ask);
+}
+
+async function initRating() {
+  const act = async (action) => {
+    await chrome.runtime.sendMessage({ type: "RATING_ACTION", action }).catch(() => {});
+    if (action === "rate") chrome.tabs.create({ url: REVIEW_URL });
+    if (action === "feedback") document.getElementById("feedbackBtn")?.click();
+    renderRating();
+  };
+  document.getElementById("rateYes")?.addEventListener("click", () => act("rate"));
+  document.getElementById("rateLater")?.addEventListener("click", () => act("later"));
+  document.getElementById("rateNo")?.addEventListener("click", (e) => { e.preventDefault(); act("feedback"); });
+  document.getElementById("rateNever")?.addEventListener("click", (e) => { e.preventDefault(); act("never"); });
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && "ratingState" in changes) renderRating(); });
+  await renderRating();
+}
+
+async function initUsageStats() {
+  const toggle = document.getElementById("usageStatsToggle");
+  if (!toggle) return;
+  const { usageStatsEnabled } = await chrome.storage.local.get("usageStatsEnabled");
+  toggle.checked = usageStatsEnabled !== false;
+  toggle.addEventListener("change", () => chrome.runtime.sendMessage({ type: "SET_USAGE_STATS", enabled: toggle.checked }).catch(() => {}));
+}
+
+initGettingStarted().catch(() => {});
+initRating().catch(() => {});
+initUsageStats().catch(() => {});
 
 initAuth();

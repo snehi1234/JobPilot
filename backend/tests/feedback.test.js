@@ -42,6 +42,7 @@ function fakeDb(t) {
     calls.push({ method, path: u.pathname, query: u.search });
     const eq = (name) => u.searchParams.get(name)?.replace(/^eq\./, "");
     if (u.pathname === "/rest/v1/profiles") return method === "DELETE" ? new Response(null, { status: 204 }) : Response.json([]);
+    if (u.pathname === "/rest/v1/events") return new Response(null, { status: method === "DELETE" ? 204 : 201 });
     assert.equal(u.pathname, "/rest/v1/feedback");
     if (method === "POST") {
       const row = { id: nextId++, created_at: new Date().toISOString(), updated_at: null, ...JSON.parse(options.body) };

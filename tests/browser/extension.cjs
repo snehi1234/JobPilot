@@ -23,6 +23,7 @@ const test = base.extend({
       channel: "chromium",
       headless: true,
       args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`],
+      ...(process.env.JOBPILOT_RECORD_DIR ? { recordVideo: { dir: process.env.JOBPILOT_RECORD_DIR, size: { width: 1280, height: 720 } } } : {}),
     });
     const api = { calls: [], profile: null, suggestions: null, profileStatus: 200, errors: [] };
     context.on("page", page => {
@@ -52,13 +53,21 @@ const test = base.extend({
         const line = String(body.resume || "").split("\n").find((l) => /pipelines|microservices/.test(l)) || "";
         response = {
           summary: `Engineer focused on ${body.jobContext?.title || "this role"}.`,
-          bullets: line ? [{ original: line, line, improved: `Designed and operated ${line.replace(/^.*?(ETL|Java)/, "$1")} for production analytics`, keywords: ["ETL"] }] : [],
+          bullets: line ? [{ original: line, line, improved: `Designed and operated ${line.replace(/^.*?(ETL|Java)/, "$1")} for production analytics (${line})`, keywords: ["ETL"] }] : [],
           skills: ["Spark", "Airflow"],
           gaps: ["Go"],
         };
       } else if (endpoint === "/api/feedback") {
         api.feedback = [...(api.feedback || []), body];
         response = { ok: true, id: api.feedback.length };
+      } else if (endpoint === "/api/events") {
+        api.events = [...(api.events || []), { ...body, authorization: request.headers().authorization || "" }];
+        response = { ok: true, stored: body?.events?.length || 0 };
+      } else if (/^\/(practice|goodbye)\.(html|js)$/.test(endpoint) || endpoint === "/icon128.png") {
+        const file = path.join(__dirname, "..", "..", "backend", "public", endpoint.slice(1));
+        const type = endpoint.endsWith(".html") ? "text/html" : endpoint.endsWith(".js") ? "text/javascript" : "image/png";
+        await route.fulfill({ path: file, contentType: type });
+        return;
       } else if (endpoint === "/api/cover-letter") {
         api.coverLetters = (api.coverLetters || 0) + 1;
         response = { letter: `Dear Hiring Team,\n\nI am applying for the ${body.jobContext?.title || "open"} role. ${"I built reliable data pipelines with Spark and Airflow. ".repeat(12)}\n\nSincerely,\nAlex Example` };

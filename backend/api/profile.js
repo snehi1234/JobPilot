@@ -7,7 +7,7 @@
 
 import { applyCors, handlePreflight, readJsonBody } from "../lib/http.js";
 import { getUserFromRequest } from "../lib/auth.js";
-import { isDbConfigured, getProfile, upsertProfile, deleteProfile, deleteFeedbackForUser } from "../lib/db.js";
+import { isDbConfigured, getProfile, upsertProfile, deleteProfile, deleteFeedbackForUser, deleteEventsForUser } from "../lib/db.js";
 import { sanitizeResumes } from "../lib/resumes.js";
 
 export default async function handler(req, res) {
@@ -61,6 +61,7 @@ export default async function handler(req, res) {
       await deleteProfile(user.sub);
       // Feedback reports are personal data too.
       await deleteFeedbackForUser(user.sub).catch((err) => console.error(`[profile] feedback delete failed: ${err.message}`));
+      await deleteEventsForUser(user.sub).catch((err) => console.error(`[profile] events delete failed: ${err.message}`));
       return res.status(200).json({ ok: true });
     }
 

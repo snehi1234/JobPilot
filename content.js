@@ -51,6 +51,11 @@ if (window !== window.top) {
     console.log(`[Hiresprint] Skipping tiny iframe (${w}x${h}) — likely an ad/widget, not a form.`);
     jpSkipFrame = true;
   }
+  // iCIMS' same-origin content frame is read and filled by the top frame.
+  if (!jpSkipFrame && typeof jpAtsAdoptedFrame === "function" && jpAtsAdoptedFrame()) {
+    console.log("[Hiresprint] Content frame handled by the top frame.");
+    jpSkipFrame = true;
+  }
 }
 
 console.log(
@@ -68,6 +73,16 @@ console.log(
 // visited-set and a hard element cap so a pathological page can never cause
 // runaway CPU/memory use.
 var JP_MAX_SCAN_ELEMENTS = 15000; // safety cap for very large/complex pages
+
+// Same-origin ATS content frames (iCIMS) are scanned as part of the page.
+function jpAdoptedFrameDoc(el) {
+  if (el.tagName !== "IFRAME" || typeof JP_ATS_FRAME_SELECTOR !== "string" || !el.matches(JP_ATS_FRAME_SELECTOR)) return null;
+  try {
+    return el.contentDocument?.documentElement ? el.contentDocument : null;
+  } catch {
+    return null; // cross-origin
+  }
+}
 
 function jpQueryAll(selector, root = document) {
   const results = [];
@@ -93,6 +108,8 @@ function jpQueryAll(selector, root = document) {
       scanned++;
       if (scanned > JP_MAX_SCAN_ELEMENTS) return results; // bail out safely
       if (el.shadowRoot && !visitedRoots.has(el.shadowRoot)) stack.push(el.shadowRoot);
+      const frameDoc = jpAdoptedFrameDoc(el);
+      if (frameDoc && !visitedRoots.has(frameDoc)) stack.push(frameDoc);
     }
   }
   return results;
@@ -117,11 +134,12 @@ function jpQueryOne(selector, root = document) {
     for (const el of all) {
       scanned++;
       if (scanned > JP_MAX_SCAN_ELEMENTS) return null;
-      if (el.shadowRoot && !visitedRoots.has(el.shadowRoot)) {
-        const found = el.shadowRoot.querySelector(selector);
+      for (const inner of [el.shadowRoot, jpAdoptedFrameDoc(el)]) {
+        if (!inner || visitedRoots.has(inner)) continue;
+        const found = inner.querySelector(selector);
         if (found) return found;
-        visitedRoots.add(el.shadowRoot);
-        stack.push(el.shadowRoot);
+        visitedRoots.add(inner);
+        stack.push(inner);
       }
     }
   }
@@ -217,9 +235,15 @@ function isVisible(el) {
     // react-select hides its input visually but it's still fillable; allow it.
     if (el.getAttribute("role") !== "combobox") return false;
   }
-  const style = window.getComputedStyle(el);
+  const style = (el.ownerDocument?.defaultView || window).getComputedStyle(el);
   if (style.visibility === "hidden" || style.display === "none") return false;
   return true;
+}
+
+// A visible element that can be an application field (not a cookie banner
+// control or an ATS's page navigation).
+function jpFieldCandidate(el) {
+  return isVisible(el) && !(typeof jpAtsIgnore === "function" && jpAtsIgnore(el));
 }
 
 // ---------- Label resolution ----------
@@ -233,6 +257,11 @@ function getLabelForElement(el) {
   }
   const parentLabel = el.closest("label");
   if (parentLabel) return parentLabel.innerText.trim();
+
+  // Web components (SmartRecruiters' spl-*, SAP UI5) carry the label on the
+  // component, often across a shadow root.
+  const componentLabel = typeof jpAtsLabel === "function" ? jpAtsLabel(el) : "";
+  if (componentLabel) return componentLabel;
 
   // Widgets often use a generic accessible name ("Search", "Select…"); the
   // real question is then in the surrounding field.
@@ -259,6 +288,8 @@ function getLabelForElement(el) {
 
 // The question text for a group of radios/checkboxes.
 function getGroupLabel(el) {
+  const question = typeof jpAtsQuestionLabel === "function" ? jpAtsQuestionLabel(el) : "";
+  if (question) return question;
   const fieldset = el.closest("fieldset");
   if (fieldset) {
     const legend = fieldset.querySelector("legend");
@@ -324,15 +355,19 @@ function comboboxContainer(input) {
 function scrapeJobContext() {
   const pick = (selectors) => {
     for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el && el.innerText && el.innerText.trim()) {
-        return el.innerText.trim().slice(0, 200);
+      for (const el of document.querySelectorAll(sel)) {
+        // <meta> tags carry their text in `content`; skip hidden headings
+        // (e.g. an "unsupported browser" <h1> before the real title).
+        const text = el.tagName === "META" ? el.getAttribute("content") : el.getClientRects?.().length === 0 ? "" : el.innerText;
+        if (text && text.trim()) return text.trim().slice(0, 200);
       }
     }
     return "";
   };
+  // iCIMS / SmartRecruiters / Taleo / SuccessFactors postings.
+  const ats = (typeof jpAtsJobContext === "function" && jpAtsJobContext()) || {};
 
-  const title = pick([
+  const title = ats.title || pick([
     "[data-automation-id='jobPostingHeader']",
     "h1.app-title",
     ".job__title h1",
@@ -349,13 +384,13 @@ function scrapeJobContext() {
     ".posting-categories .location",
   ]);
 
-  const company = pick([
+  const company = ats.company || pick([
     "[class*='company-name']",
     ".company-name",
     "meta[property='og:site_name']",
   ]) || document.title.split(/[-|]/)[0].trim();
 
-  const description = scrapeJobDescription();
+  const description = ats.description || scrapeJobDescription();
 
   return {
     title,
@@ -380,26 +415,39 @@ function applicationSourceHint() {
 
 // Grab the job description text so the AI can tailor answers to this role.
 function scrapeJobDescription() {
-  const candidates = [
+  const specific = [
     "[data-automation-id='jobPostingDescription']",
-    "[class*='job-description']",
-    "[class*='jobDescription']",
-    "[class*='posting-description']",
-    "[class*='description']",
+    "[class*='job-description' i]",
+    "[class*='jobdescription' i]",
+    "[class*='posting-description' i]",
+    "[class*='job-content' i]",
+    "[class*='jobcontent' i]",
+    "[class*='job-details' i]",
+    "[class*='jobdetails' i]",
+    "[class*='description' i]",
     "[data-testid*='description']",
     "#job-description",
     ".content .body",
-    "article",
-    "main",
   ];
 
+  // The first selector with a full description wins; a short match (e.g. a
+  // pay-range block whose class mentions "description") doesn't stop the search.
   let best = "";
-  for (const sel of candidates) {
+  for (const sel of specific) {
     document.querySelectorAll(sel).forEach((el) => {
       const txt = (el.innerText || "").trim();
       if (txt.length > best.length) best = txt;
     });
-    if (best.length > 400) break;
+    if (best.length > 1500) break;
+  }
+  if (best.length < 400) {
+    for (const sel of ["article", "main"]) {
+      document.querySelectorAll(sel).forEach((el) => {
+        const txt = (el.innerText || "").trim();
+        if (txt.length > best.length) best = txt;
+      });
+      if (best.length > 400) break;
+    }
   }
 
   // Cap length to keep the prompt within token limits.
@@ -407,6 +455,15 @@ function scrapeJobDescription() {
 }
 
 // ---------- Detection ----------
+
+// Site search bars ("Search for jobs or keywords", iCIMS' keyword/location
+// search) aren't application fields.
+function jpIsSiteSearch(el, label) {
+  const hints = `${label || ""} ${el.placeholder || ""} ${el.getAttribute("aria-label") || ""} ${el.name || ""} ${el.id || ""} ${el.getAttribute("data-automation-id") || ""}`;
+  return (el.getAttribute("type") || "").toLowerCase() === "search" || el.getAttribute("role") === "searchbox" ||
+    !!el.closest("[role='search'], header, nav") ||
+    /keywordSearch|searchInput|search for jobs|search jobs|job search|^search\b|\b(keyword|location)[-_ ]search\b|search by (keyword|location)/i.test(hints.trim());
+}
 
 function detectFields() {
   fieldRegistry = {};
@@ -430,11 +487,13 @@ function detectFields() {
 
   // 0) Workday's custom widgets (dropdown buttons, search prompts, dates).
   if (typeof jpIsWorkday === "function" && jpIsWorkday()) index = jpWorkdayDetect(fields, claimed, index, nextLabelIndex);
+  // 0b) SuccessFactors / SAP UI5 pick lists.
+  if (typeof jpAtsDetect === "function") index = jpAtsDetect(fields, claimed, index, nextLabelIndex);
 
   // 1) Radio groups — one field per group (by name).
   const radioGroups = {};
   jpQueryAll("input[type='radio']").forEach((r) => {
-    if (!isVisible(r)) return;
+    if (!jpFieldCandidate(r)) return;
     const key = r.name || getGroupLabel(r) || r.id;
     (radioGroups[key] ||= []).push(r);
   });
@@ -458,7 +517,7 @@ function detectFields() {
 
   // 2) Checkboxes — individual yes/no toggles.
   jpQueryAll("input[type='checkbox']").forEach((c) => {
-    if (!isVisible(c) || claimed.has(c)) return;
+    if (!jpFieldCandidate(c) || claimed.has(c)) return;
     const id = String(index++);
     c.setAttribute(FIELD_ATTR, id);
     const label = checkboxLabel(c);
@@ -474,7 +533,8 @@ function detectFields() {
 
   // 3) react-select comboboxes.
   jpQueryAll("input[role='combobox']").forEach((cb) => {
-    if (!isVisible(cb) || claimed.has(cb) || !isComboboxInput(cb)) return;
+    if (!jpFieldCandidate(cb) || claimed.has(cb) || !isComboboxInput(cb)) return;
+    if (cb.closest("[role='search']") || /\b(keyword|location)[-_]search\b/i.test(`${cb.id} ${cb.name || ""}`)) return; // job-search typeaheads (e.g. iCIMS' header)
     claimed.add(cb);
     const id = String(index++);
     cb.setAttribute(FIELD_ATTR, id);
@@ -491,7 +551,7 @@ function detectFields() {
 
   // 4) Native selects.
   jpQueryAll("select").forEach((sel) => {
-    if (!isVisible(sel) || claimed.has(sel)) return;
+    if (!jpFieldCandidate(sel) || claimed.has(sel)) return;
     const id = String(index++);
     sel.setAttribute(FIELD_ATTR, id);
     const label = getLabelForElement(sel);
@@ -511,7 +571,7 @@ function detectFields() {
   const buttonCandidates = Array.from(
     jpQueryAll("button, [role='button'], [role='radio'] , a[role='button']")
   ).filter((b) => {
-    if (!isVisible(b) || claimed.has(b)) return false;
+    if (!jpFieldCandidate(b) || claimed.has(b)) return false;
     // NOTE: a <button> with no type attribute defaults to type="submit" via the
     // DOM property, so we must check the ATTRIBUTE, not the property.
     const typeAttr = (b.getAttribute("type") || "").toLowerCase();
@@ -596,7 +656,7 @@ function detectFields() {
 
   const textLike = jpQueryAll("input, textarea");
   textLike.forEach((el) => {
-    if (!isVisible(el) || claimed.has(el)) return;
+    if (!jpFieldCandidate(el) || claimed.has(el)) return;
     if (isComboboxInput(el)) return;
 
     if (el.tagName === "INPUT") {
@@ -614,9 +674,7 @@ function detectFields() {
     if (/^select\.{0,3}$/i.test(rawLabel)) return;
     if (el.readOnly && !rawLabel) return;
     // Site search bars ("Search for jobs or keywords") aren't application fields.
-    const hints = `${rawLabel} ${el.placeholder || ""} ${el.getAttribute("aria-label") || ""} ${el.name || ""} ${el.id || ""} ${el.getAttribute("data-automation-id") || ""}`;
-    if ((el.getAttribute("type") || "").toLowerCase() === "search" || el.getAttribute("role") === "searchbox" ||
-        el.closest("[role='search'], header, nav") || /keywordSearch|searchInput|search for jobs|search jobs|job search|^search\b/i.test(hints.trim())) return;
+    if (jpIsSiteSearch(el, rawLabel)) return;
 
     const id = String(index++);
     el.setAttribute(FIELD_ATTR, id);
@@ -895,7 +953,7 @@ async function fillCombobox(input, value) {
     for (let attempt = 0; attempt < 30; attempt++) {
       const controlled = input.getAttribute("aria-controls");
       const list = controlled ? jpResolveId(controlled, input) : null;
-      const options = jpQueryAll("[role='option'], [class*='select__option'], [class*='option']", list || document)
+      const options = jpQueryAll("[role='option'], [class*='select__option'], [class*='option'], spl-select-option", list || document)
         .filter(option => isVisible(option) && option.textContent.trim() && option.getAttribute("aria-disabled") !== "true");
       let best = null;
       let bestScore = 0;
@@ -952,6 +1010,8 @@ function jpElementsForKind(kind) {
     case "wd-date":
       return jpQueryAll("input[data-automation-id$='dateSectionMonth-input']")
         .map((m) => m.closest("[data-automation-id='dateInputWrapper'], [data-automation-id^='formField'], div") || m.parentElement);
+    case "ats-dropdown":
+      return typeof JP_ATS_DROPDOWN_SELECTOR === "string" ? jpQueryAll(JP_ATS_DROPDOWN_SELECTOR) : [];
     case "text":
       return jpQueryAll("input, textarea").filter((el) => !isComboboxInput(el));
     default:
@@ -1031,6 +1091,7 @@ async function applyAnswers(suggestions) {
         if (meta.kind === "wd-dropdown") ok = await jpFillWorkdayDropdown(el, value);
         else if (meta.kind === "wd-prompt") ok = await jpFillWorkdayPrompt(el, value);
         else if (meta.kind === "wd-date") ok = await jpFillWorkdayDate(el, value);
+        else if (meta.kind === "ats-dropdown") ok = await jpFillAtsDropdown(el, value);
         else if (meta.kind === "combobox") ok = await fillCombobox(el, value);
         else if (meta.kind === "checkbox") ok = fillCheckbox(el, value);
         else if (el.tagName === "SELECT") ok = fillNativeSelect(el, value);
@@ -1458,6 +1519,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // First expand any repeatable "Add Experience / Add Education" sections so
     // their hidden fields exist, THEN detect everything.
+    const gate = typeof jpAtsGate === "function" ? jpAtsGate() : null;
+    if (gate) {
+      // A sign-in / email / security-check step, not the application form.
+      jpAutofillInProgress = false;
+      jpShowGate(gate).then(async () => {
+        const { frameId } = await chrome.runtime.sendMessage({ type: "FRAME_INFO" });
+        sendResponse({ fields: [], jobContext: scrapeJobContext(), hint: gate.hint, scanId: fieldScanId, frameId });
+      }).catch((err) => sendResponse({ error: err.message }));
+      return true;
+    }
     expandRepeatableSections(message.counts || {}, message.parsedEntries || null).then(async (expanded) => {
       const fields = detectFields();
       const jobContext = scrapeJobContext();
@@ -1567,6 +1638,8 @@ function looksLikeJobApplication() {
     "teamtailor.com",
   ];
   if (KNOWN_ATS.some((d) => host.endsWith(d) || host.includes(d))) return true;
+  // ATS postings on an employer's own domain (e.g. SuccessFactors career sites).
+  if (typeof jpAtsPlatform === "function" && jpAtsPlatform()) return true;
 
   // Otherwise: look for tell-tale application fields.
   const labels = Array.from(document.querySelectorAll("label"))
@@ -1620,6 +1693,17 @@ function jpPositionToastNearFab(toast) {
   if (left + toastWidth > vw - margin) left = vw - toastWidth - margin;
   if (left < margin) left = margin;
   toast.style.left = `${left}px`;
+}
+
+// A sign-in / email / security-check step before the form: fill the email
+// address if the step asks for it, and explain what to do next.
+async function jpShowGate(gate) {
+  const input = gate.emailInput;
+  if (input && !input.value) {
+    const { structured } = await chrome.storage.local.get("structured");
+    if (structured?.email && fillText(input, structured.email)) jpMark(input, "profile");
+  }
+  jpToast(gate.hint, "note");
 }
 
 // After filling: attach the resume file, show the checklist, and remember the
@@ -1711,7 +1795,7 @@ async function checkAutofillConsent(isAuto) {
   return false;
 }
 
-async function runAutofillFromButton(isAuto = false) {
+async function runAutofillFromButton(isAuto = false, { pending = false } = {}) {
   if (jpAutofillInProgress) {
     console.log("[Hiresprint] Autofill already in progress — ignoring duplicate trigger.");
     if (!isAuto) jpToast("Already filling — please wait…", "info");
@@ -1765,6 +1849,13 @@ async function runAutofillFromButton(isAuto = false) {
     jpFillRecords.clear();
     jpHideChecklist();
 
+    // Sign-in, email, or security-check step before the application form.
+    const gate = typeof jpAtsGate === "function" ? jpAtsGate() : null;
+    if (gate) {
+      await jpShowGate(gate);
+      return;
+    }
+
     const earlyContext = scrapeJobContext();
     const pick = await jpChooseResume(earlyContext, isAuto);
     jpCurrentResume = pick;
@@ -1797,9 +1888,18 @@ async function runAutofillFromButton(isAuto = false) {
       fields = detectFields();
     }
     if (fields.length) jpOpenedApplyForm = false;
+    // The page may have finished rendering a sign-in step while we waited.
+    const lateGate = typeof jpAtsGate === "function" ? jpAtsGate() : null;
+    if (lateGate) {
+      await jpShowGate(lateGate);
+      return;
+    }
     // Workday dropdowns list their options only while open.
     if (typeof jpWorkdayReadOptions === "function" && fields.some((f) => fieldRegistry[f.id]?.kind === "wd-dropdown")) {
       await jpWorkdayReadOptions(fields);
+    }
+    if (typeof jpAtsReadOptions === "function" && fields.some((f) => fieldRegistry[f.id]?.kind === "ats-dropdown")) {
+      await jpAtsReadOptions(fields);
     }
     console.log(
       `[Hiresprint] Detected ${fields.length} fillable field(s):`,
@@ -1820,7 +1920,7 @@ async function runAutofillFromButton(isAuto = false) {
         try { sessionStorage.setItem(JP_PENDING_KEY, String(Date.now())); } catch { /* storage blocked */ }
         apply.click();
         for (let waited = 0; waited < 10000 && !jpFormVisible() && !(typeof jpWorkdayHint === "function" && jpWorkdayHint()); waited += 500) await sleep(500);
-        if (jpFormVisible()) {
+        if (jpFormVisible() || (typeof jpAtsGate === "function" && jpAtsGate())) {
           try { sessionStorage.removeItem(JP_PENDING_KEY); } catch { /* storage blocked */ }
           setTimeout(() => runAutofillFromButton(false), 0); // after this run releases its lock
           return;
@@ -1828,6 +1928,16 @@ async function runAutofillFromButton(isAuto = false) {
       }
       const wdHint = typeof jpWorkdayHint === "function" ? jpWorkdayHint() : "";
       if (wdHint) { jpToast(wdHint, "note"); return; }
+      const atsGate = typeof jpAtsGate === "function" ? jpAtsGate() : null;
+      if (atsGate) { await jpShowGate(atsGate); return; }
+      // We already pressed Apply and came back to the posting (some career
+      // sites only accept the person's own click there).
+      const stillApply = jpOpenedApplyForm ? jpFindApplyControl() : null;
+      if (stillApply) {
+        const name = (stillApply.tagName === "INPUT" ? stillApply.value : stillApply.innerText || stillApply.textContent || "Apply").replace(/\s+/g, " ").trim();
+        jpToast(`Click “${name}” on this page to open the application, then click ⚡ Autofill.`, "note");
+        return;
+      }
       jpToast("No application form found here. Open the job's application form, then click Autofill.", "note",
         { label: "Report this page", run: () => jpOpenFeedback("site") });
       return;
@@ -1927,6 +2037,9 @@ async function runAutofillFromButton(isAuto = false) {
     await openPanelOrToast(`Autofill failed: ${err.message}`);
   } finally {
     jpAutofillInProgress = false;
+    if (pending) {
+      try { sessionStorage.removeItem(JP_PENDING_KEY); } catch { /* storage blocked */ }
+    }
     if (btn) {
       btn.disabled = false;
       btn.textContent = "⚡ Autofill";
@@ -1980,10 +2093,14 @@ function injectFab() {
     touchAction: "none", // so pointer drag works smoothly on touch too
   });
 
-  const saved = jpLoadFabPosition();
+  const saved = window === window.top ? jpLoadFabPosition() : null;
   if (saved) {
     host.style.left = saved.left + "px";
     host.style.top = saved.top + "px";
+  } else if (window !== window.top && window.innerHeight > (screen.availHeight || 900)) {
+    // A frame sized to its content (iCIMS embeds): its bottom is off screen.
+    host.style.top = "20px";
+    host.style.right = "20px";
   } else {
     host.style.bottom = "20px";
     host.style.right = "20px";
@@ -2047,6 +2164,10 @@ function injectFab() {
   shadow.appendChild(wrap);
   document.documentElement.appendChild(host);
   jpKeepFabOnScreen(host);
+  if (window !== window.top) {
+    jpStartFrameTracking();
+    jpPlaceFloating();
+  }
   console.log("[Hiresprint] Floating Autofill button injected.");
 
   // ---- Drag to move (pointer events cover mouse + touch) ----
@@ -2095,7 +2216,12 @@ function injectFab() {
     jpFabDragging = false;
     btn.style.cursor = "grab";
     const rect = host.getBoundingClientRect();
-    jpSaveFabPosition({ left: rect.left, top: rect.top });
+    if (jpContentSizedFrame() && !jpFrameView.hidden) {
+      // Remember the spot relative to what's on screen, not to the tall frame.
+      jpFabFrameOffset = { right: Math.max(4, jpFrameView.right - rect.right), bottom: Math.max(4, jpFrameView.bottom - rect.bottom) };
+    } else {
+      jpSaveFabPosition({ left: rect.left, top: rect.top });
+    }
     // If the pointer barely moved, treat it as a click, not a drag.
     if (!moved) runAutofillFromButton();
   };
@@ -2105,6 +2231,70 @@ function injectFab() {
 
 function removeFab() {
   document.getElementById(JP_BTN_ID)?.remove();
+}
+
+// ---------- Frames sized to their content ----------
+// Embedded application forms (Greenhouse's embed on company sites, iCIMS)
+// often live in an iframe that grows to the form's full height, so the outer
+// page scrolls instead of the frame. "position: fixed" inside such a frame is
+// relative to the whole frame, which would leave our button at the very
+// bottom of the form and moving with the page. Track which part of the frame
+// is on screen and keep our floating UI inside that part.
+var jpFrameView = null; // { top, bottom, left, right, hidden } in frame coordinates
+var jpFabFrameOffset = null; // where the user dragged the button, from the visible corner
+var jpFrameTrackingStarted = false;
+
+function jpContentSizedFrame() {
+  return window !== window.top && !!jpFrameView &&
+    document.documentElement.scrollHeight <= window.innerHeight + 8 && window.innerHeight > 120;
+}
+
+function jpStartFrameTracking() {
+  if (jpFrameTrackingStarted || window === window.top || typeof IntersectionObserver !== "function") return;
+  jpFrameTrackingStarted = true;
+  const thresholds = Array.from({ length: 201 }, (_, i) => i / 200);
+  const io = new IntersectionObserver((entries) => {
+    const entry = entries[entries.length - 1];
+    const r = entry.intersectionRect;
+    jpFrameView = entry.isIntersecting && r.height > 0
+      ? { top: r.top, bottom: r.bottom, left: r.left, right: r.right, hidden: false }
+      : { hidden: true };
+    jpPlaceFloating();
+  }, { threshold: thresholds });
+  io.observe(document.documentElement);
+  setInterval(() => { if (!jpOrphaned()) jpPlaceFloating(); }, 250);
+}
+
+function jpPlaceFloating() {
+  if (!jpContentSizedFrame()) return;
+  const v = jpFrameView;
+  const fab = document.getElementById(JP_BTN_ID);
+  if (fab && !jpFabDragging) {
+    fab.style.visibility = v.hidden ? "hidden" : "visible";
+    if (!v.hidden) {
+      const off = jpFabFrameOffset || { right: 20, bottom: 20 };
+      const w = fab.offsetWidth || 130;
+      const h = fab.offsetHeight || 44;
+      const top = Math.max(v.top + 4, Math.min(v.bottom - h - off.bottom, window.innerHeight - h - 4));
+      const left = Math.max(4, Math.min(v.right - w - off.right, window.innerWidth - w - 4));
+      Object.assign(fab.style, { top: `${top}px`, left: `${left}px`, right: "", bottom: "" });
+    }
+  }
+  if (v.hidden) return;
+  const toast = document.getElementById("jobpilot-toast");
+  if (toast) {
+    if (fab) jpPositionToastNearFab(toast);
+    else Object.assign(toast.style, { top: `${Math.max(v.top + 12, v.bottom - toast.offsetHeight - 20)}px`, bottom: "", right: "20px" });
+  }
+  const panel = typeof JP_PANEL_ID === "string" ? document.getElementById(JP_PANEL_ID) : null;
+  if (panel) {
+    const h = panel.offsetHeight || 300;
+    Object.assign(panel.style, { top: `${Math.max(v.top + 12, v.bottom - h - 80)}px`, bottom: "" });
+  }
+  for (const id of ["jobpilot-feedback", "jobpilot-cover-editor"]) {
+    const overlay = document.getElementById(id);
+    if (overlay) Object.assign(overlay.style, { inset: "", top: `${v.top}px`, left: "0", right: "0", height: `${v.bottom - v.top}px` });
+  }
 }
 
 // A position saved on a wider window (or before a zoom change) can be off
@@ -2198,21 +2388,37 @@ async function maybeAutoFill() {
 var jpPrefetchedUrl = null;
 var jpOpenedApplyForm = false;
 var JP_PENDING_KEY = "jobpilot_pending_autofill";
+var jpPendingScheduled = false;
+
+// The employer's ATS, which a career site's Apply button may hand off to.
+function jpIsAtsHost(hostname) {
+  return /(^|\.)(icims\.com|smartrecruiters\.com|taleo\.net|successfactors\.(com|eu|cn)|sapsf\.(com|eu|cn)|myworkdayjobs\.com|greenhouse\.io|lever\.co|ashbyhq\.com)$/.test(hostname || "");
+}
 
 // A visible link, button, or tab that opens the application form.
 function jpFindApplyControl() {
-  const candidates = jpQueryAll("a, button, [role='tab'], [role='button']").filter((el) => {
-    const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+  // iCIMS / SmartRecruiters / Taleo / SuccessFactors postings: their own Apply
+  // control, even when it is labelled in another language.
+  const atsApply = typeof jpAtsApplyControl === "function" ? jpAtsApplyControl() : null;
+  if (atsApply) return atsApply;
+  // Taleo's "Apply Online" is an <input type="button">.
+  const inputButtons = typeof jpAtsPlatform === "function" && jpAtsPlatform() === "taleo" ? ", input[type='button']" : "";
+  const onAtsPosting = typeof jpAtsPlatform === "function" && !!jpAtsPlatform();
+  const candidates = jpQueryAll(`a, button, [role='tab'], [role='button']${inputButtons}`).filter((el) => {
+    const text = (el.tagName === "INPUT" ? el.value : el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
     if (!text || text.length > 40 || !isVisible(el)) return false;
     if (el.getAttribute("data-automation-id") === "adventureButton") return true; // Workday's Apply opens a chooser on the same page
-    if (!/^(apply( now| here| online)?|apply (for|to) (this|the) (job|position|role)|application|start (your )?application|i'?m interested)$/i.test(text)) return false;
+    if (!/^(apply( now| here| online)?|apply (for|to) (this|the) (job|position|role)( online| now)?|application|start (your )?application|i['’]?m interested)\s*[»›→>]?$/i.test(text)) return false;
     const href = el.getAttribute("href");
     if (el.getAttribute("aria-selected") === "true" || el.getAttribute("aria-current")) return false;
     if (href && !href.startsWith("#")) {
       try {
         const target = new URL(href, location.href);
-        // Stay on the job site; LinkedIn "Easy Apply"-style links elsewhere are out of scope.
-        if (target.hostname !== location.hostname) return false;
+        // Stay on the job site (or, from a recognized ATS posting, the
+        // employer's ATS — e.g. a SuccessFactors career site applying on
+        // successfactors.com); LinkedIn "Easy Apply"-style links elsewhere
+        // are out of scope.
+        if (target.hostname !== location.hostname && !(onAtsPosting && jpIsAtsHost(target.hostname))) return false;
         // A tab linking to this page (e.g. Ashby's "Application" tab on the form itself).
         if (target.pathname.replace(/\/+$/, "") === location.pathname.replace(/\/+$/, "")) return false;
       } catch { return false; }
@@ -2225,7 +2431,7 @@ function jpFindApplyControl() {
 
 function jpFormVisible() {
   return jpQueryAll("input:not([type='hidden']):not([type='submit']):not([type='button']), textarea, select")
-    .filter((el) => isVisible(el)).length >= 2;
+    .filter((el) => jpFieldCandidate(el) && !jpIsSiteSearch(el, "")).length >= 2;
 }
 
 // Check periodically (handles SPA job forms that render after load).
@@ -2238,10 +2444,16 @@ function maybeShowFab() {
       // this page; finish the fill here.
       let pendingAt = 0;
       try { pendingAt = Number(sessionStorage.getItem(JP_PENDING_KEY)) || 0; } catch { /* storage blocked */ }
-      if (pendingAt && Date.now() - pendingAt < 60000 && !jpAutofillInProgress) {
-        try { sessionStorage.removeItem(JP_PENDING_KEY); } catch { /* storage blocked */ }
+      if (pendingAt && Date.now() - pendingAt < 60000 && !jpAutofillInProgress && !jpPendingScheduled) {
         jpOpenedApplyForm = true;
-        setTimeout(() => runAutofillFromButton(false), 500);
+        jpPendingScheduled = true;
+        // Clear the request only once a fill has run here: an intermediate
+        // page that moves on by itself (e.g. Taleo's jobdetail → application
+        // → sign-in) leaves it for the page that stays.
+        setTimeout(() => {
+          jpPendingScheduled = false;
+          runAutofillFromButton(false, { pending: true });
+        }, 500);
       }
       if (jpPrefetchedUrl !== location.href) {
         jpPrefetchedUrl = location.href;

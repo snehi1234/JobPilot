@@ -46,3 +46,38 @@ test("the PDF is valid, multi-page when needed, and escapes text safely", async 
   const offsets = [...pdf.matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
   offsets.forEach((o, i) => assert.ok(pdf.startsWith(`${i + 1} 0 obj`, o), `object ${i + 1}`));
 });
+
+const WRAPPED = `Sam Sample
+sam@example.com | Seattle, WA
+Professional Experience
+Example Corp
+Software Engineer   Sept 2024   –   Present
+●   Led the design and delivery of File Exchange, a net - new platform capability   that extended partner integration beyond B2B APIs to
+secure UI - driven file upload/download. It was adopted by 30+ partners, processing
+8,600+ files/day.
+●   Built core components of a secure financial platform   (C#, .NET Core 6, Python, Vue.js) for stock and fund - transfer
+operations, designing the data - access layer for testability.
+Other Co
+Full Stack Engineer   Jul 2023   –   Aug 2024
+●   Drove the migration of a legacy Java application to .NET.
+Education
+MS, Computer Science`;
+
+test("wrapped bullets are joined so a rewrite replaces the whole bullet", async () => {
+  const { reflowBullets, applyTailoring } = await load();
+  const lines = reflowBullets(WRAPPED).split("\n");
+  const first = lines.find((l) => l.includes("File Exchange"));
+  assert.match(first, /beyond B2B APIs to secure UI - driven .* processing 8,600\+ files\/day\.$/);
+  assert.ok(lines.includes("Other Co"), "company names after a finished bullet stay on their own line");
+  assert.ok(lines.some((l) => /^Full Stack Engineer/.test(l)), "dated title lines are never joined");
+  const out = applyTailoring(WRAPPED, { bullets: [{ line: first.trim(), improved: "Delivered File Exchange, secure UI-driven file upload/download beyond B2B APIs, adopted by 30+ partners processing 8,600+ files/day." }] });
+  assert.match(out, /Delivered File Exchange/);
+  assert.doesNotMatch(out, /secure UI - driven file upload\/download\. It was adopted/, "no leftover tail of the old bullet");
+  assert.doesNotMatch(out, /^8,600\+ files\/day\.$/m);
+});
+
+test("the extension and the server join bullets the same way", async () => {
+  const { reflowBullets } = await load();
+  const server = await import(pathToFileURL(path.join(__dirname, "..", "backend", "lib", "tailor.js")).href);
+  assert.equal(server.reflowBullets(WRAPPED), reflowBullets(WRAPPED));
+});

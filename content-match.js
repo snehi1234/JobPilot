@@ -39,12 +39,27 @@ function jpJobOnPage() {
   }
   // Company career sites and ATS postings: only before the application form
   // is open (the checklist shows the match while filling).
-  if (typeof looksLikeJobApplication !== "function" || !looksLikeJobApplication()) return null;
-  const workdayPosting = !!document.querySelector("[data-automation-id='jobPostingDescription']");
-  if (!workdayPosting && typeof jpFormVisible === "function" && jpFormVisible()) return null;
+  if (typeof looksLikeJobApplication !== "function") return null;
+  if (!looksLikeJobApplication() && !jpLooksLikePosting()) return null;
+  const postingShown = !!document.querySelector("[data-automation-id='jobPostingDescription']") ||
+    (typeof jpAtsIsPosting === "function" && jpAtsIsPosting());
+  if (!postingShown && typeof jpFormVisible === "function" && jpFormVisible()) return null;
   const ctx = typeof scrapeJobContext === "function" ? scrapeJobContext() : null;
   if (!ctx?.description || ctx.description.length < 300) return null;
   return { title: ctx.title, company: ctx.company, description: ctx.description };
+}
+
+// A job posting on a company's own careers site (e.g. careers.example.com/jobs/123,
+// where the application opens later or in an embedded form).
+function jpLooksLikePosting() {
+  const ld = [...document.querySelectorAll('script[type="application/ld+json"]')].some((s) => /"JobPosting"/.test(s.textContent || ""));
+  if (ld) return true;
+  const url = location.pathname + location.search;
+  if (!/(\/jobs?\/|\/careers?\/|\/positions?\/|\/openings?\/|\/vacanc|\/requisitions?\/|\/job-?details?|[?&](gh_jid|jobid|job_id|jid)=)/i.test(url)) return false;
+  const apply = [...document.querySelectorAll("a, button, input[type='button'], input[type='submit']")].some((el) =>
+    /^\s*apply\b/i.test(el.innerText || el.value || "") && el.getClientRects().length > 0);
+  if (!apply) return false;
+  return /(responsibilit|qualifications|requirements|what you('|’)ll do|about the role|you will|you'll|experience (with|in))/i.test(document.body?.innerText || "");
 }
 
 function jpRemoveBadge() {

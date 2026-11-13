@@ -51,13 +51,13 @@ function showGate(message = "") {
   $("gateError").textContent = message;
 }
 
-async function api(method, body) {
+async function api(method, body, query = "") {
   const token = getToken();
   if (!token) {
     showGate("Your session expired. Please sign in again.");
     throw new Error("signed out");
   }
-  const res = await fetch(API, {
+  const res = await fetch(API + query, {
     method,
     headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -88,6 +88,7 @@ async function load() {
     $("signout").classList.remove("hidden");
     $("who").textContent = data.admin || "";
     render();
+    window.dispatchEvent(new Event("admin-loaded"));
   } catch (err) {
     if (!["signed out", "forbidden"].includes(err.message)) showGate(err.message);
   } finally {

@@ -8,10 +8,10 @@ listing form. Copy/paste each section into its matching field.
 ## Store listing
 
 ### Extension name
-Hiresprint — AI Job Autofill & Resume Match
+Hiresprint — AI Job Application Autofill, Resume Match & Tailor
 
 ### Short description (max 132 characters)
-AI job application autofill with resume match scores, cover letters, and review tools. You stay in control of every submission.
+Autofill job applications on Workday, Greenhouse, Lever & more. See your resume match, tailor it to each job, and add cover letters.
 
 ### Category
 Productivity > Workflow & Planning
@@ -59,6 +59,8 @@ make mistakes.
 • Drafts long answers you can shorten or expand
 • Cover letters: AI-written for each job, or your own file — pasted or attached as PDF
 • Offers editable suggestions in the side panel
+• Practice application: try Autofill risk-free before your first real application
+• Built-in feedback: report a problem in two clicks from the panel or any application page
 • Lets you disable automatic filling and delete your saved profile
 • Free to use, with a fair monthly usage limit
 
@@ -134,10 +136,13 @@ definition, but disclose the backend API calls under "data usage" below).
 Data handled: name and contact details, Google account identifier and local
 authentication token, resume text, work authorization, optional demographics
 and disability information, optional salary target, form fields and job
-content, site hostname or job location, and per-user monthly usage counters.
+content, site hostname or job location, per-user monthly usage counters, and
+anonymous usage events (feature names, counts, durations, coarse job-site type,
+extension version, random install ID; never page addresses or form contents).
 
 Purpose: provide profile sync, account authentication, job application
-autofill, and quota enforcement. Data is not sold or used for advertising.
+autofill, quota enforcement, and product analytics (which features are used;
+users can turn this off in the side panel). Data is not sold or used for advertising.
 Automatic processing is off by default and requires the separate in-product
 opt-in described above.
 
@@ -146,26 +151,18 @@ service provider that generates answers on Hiresprint's behalf.
 
 ---
 
-## Screenshots to capture (1280x800 recommended)
+## Screenshots (store-assets/, 1280x800)
 
-1. **Side panel — Quick Details view** (signed in, some fields filled) —
-   shows the profile setup UI.
-2. **A real job application page with the floating Autofill button visible**
-   (e.g. the Greenhouse/SpaceX page used for testing) — shows the button
-   in context.
-3. **The "Review Suggestions" screen** in the side panel after a fill,
-   showing AI-generated answers ready for review.
-4. **Before/after of a filled form** — optional but effective, shows the
-   value proposition clearly.
-5. **Onboarding welcome screen** — clean, on-brand, shows the 3-step flow.
+Generated from the real extension UI with `STORE_SHOTS=1 npx playwright test tests/browser/store-shots.spec.cjs`:
 
-Take these directly from your browser (Windows+Shift+S or a screenshot tool),
-crop/resize to exactly 1280x800, and save as PNG or JPEG.
+1. `hiresprint-1-autofill-1280x800.png` — Fill job applications in one click
+2. `hiresprint-2-match-1280x800.png` — See your match on every job posting
+3. `hiresprint-3-tailor-1280x800.png` — Tailor your resume to the job
+4. `hiresprint-4-ats-1280x800.png` — Pass the ATS check
+5. `hiresprint-5-studio-1280x800.png` — Answer once, reuse everywhere
 
 ---
 
-## Promotional images (optional but recommended)
-- Small tile: 440x280
-- Marquee: 1400x560
-(Can be created later — not required for initial submission, only for
-featured placement opportunities.)
+## Promotional images (store-assets/)
+- Small tile: `hiresprint-promo-small-440x280.png`
+- Marquee: `hiresprint-promo-marquee-1400x560.png`

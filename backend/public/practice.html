@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
+  <title>Practice application · Software Engineer, Platform · Northwind Labs</title>
+  <link rel="icon" href="/icon128.png" />
+  <style>
+    :root { --ink: #1f2937; --muted: #6b7280; --line: #e5e7eb; --brand: #4a3aff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: #f9fafb; }
+    .banner { background: #eef2ff; border-bottom: 1px solid #c7d2fe; color: #3730a3; padding: 10px 20px; text-align: center; font-size: 14px; }
+    .banner b { color: #312e81; }
+    main { max-width: 760px; margin: 0 auto; padding: 28px 20px 80px; }
+    .company { color: var(--muted); font-weight: 600; letter-spacing: .02em; text-transform: uppercase; font-size: 12px; }
+    h1 { margin: 4px 0 2px; font-size: 28px; }
+    .meta { color: var(--muted); margin-bottom: 18px; }
+    .job, form { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; }
+    .job h2, form h2 { font-size: 18px; margin: 0 0 8px; }
+    .job ul { padding-left: 20px; margin: 6px 0 12px; }
+    .field { margin: 14px 0; }
+    label, legend { display: block; font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .req { color: #dc2626; }
+    input[type=text], input[type=email], input[type=tel], input[type=url], select, textarea {
+      width: 100%; padding: 9px 11px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; background: #fff; }
+    textarea { min-height: 110px; resize: vertical; }
+    fieldset { border: none; padding: 0; margin: 14px 0; }
+    .radio { display: flex; gap: 18px; font-weight: 400; }
+    .radio label { font-weight: 400; display: flex; gap: 6px; align-items: center; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 600px) { .row2 { grid-template-columns: 1fr; } }
+    .section-title { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .hint { color: var(--muted); font-size: 13px; font-weight: 400; }
+    button[type=submit] { background: var(--brand); color: #fff; border: none; border-radius: 8px; padding: 11px 22px; font: inherit; font-weight: 600; cursor: pointer; }
+    .done { display: none; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; }
+    .done.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    🧪 <b>Practice application.</b> Click Hiresprint's <b>⚡ Autofill</b> button (bottom-right) to see it in action.
+    Northwind Labs is a made-up company and nothing on this page is ever submitted.
+  </div>
+  <main>
+    <div class="company">Northwind Labs</div>
+    <h1>Software Engineer, Platform</h1>
+    <div class="meta">Seattle, WA or Remote (US) · Full-time · Engineering</div>
+
+    <section class="job" id="job-description">
+      <h2>About the role</h2>
+      <p>Northwind Labs builds logistics software used by thousands of warehouses. Our Platform team owns the
+        services, APIs, and developer tooling every product team builds on.</p>
+      <h2>What you'll do</h2>
+      <ul>
+        <li>Design and build reliable, scalable backend services and REST APIs in Python, Go, or Java.</li>
+        <li>Run services on Kubernetes and Docker in AWS or Azure, with CI/CD and infrastructure as code (Terraform).</li>
+        <li>Improve observability, on-call health, and performance of distributed systems.</li>
+        <li>Partner with product teams on API design, data models (PostgreSQL, Redis, Kafka), and security reviews.</li>
+      </ul>
+      <h2>What we're looking for</h2>
+      <ul>
+        <li>3+ years building production software; strong computer science fundamentals.</li>
+        <li>Experience with microservices, cloud platforms, SQL, and automated testing.</li>
+        <li>Bonus: machine learning, LLM, or React/TypeScript experience.</li>
+      </ul>
+    </section>
+
+    <div class="done" id="doneMsg" role="status">
+      <b>Nice — that's how Hiresprint works.</b> This practice form wasn't sent anywhere.
+      Now open a real job application and click ⚡ Autofill. Review every answer, then submit it yourself.
+    </div>
+
+    <form id="application" novalidate>
+      <h2>Apply for this job</h2>
+      <div class="row2">
+        <div class="field"><label for="first_name">First Name <span class="req">*</span></label><input type="text" id="first_name" name="first_name" autocomplete="off" required /></div>
+        <div class="field"><label for="last_name">Last Name <span class="req">*</span></label><input type="text" id="last_name" name="last_name" autocomplete="off" required /></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label for="email">Email <span class="req">*</span></label><input type="email" id="email" name="email" autocomplete="off" required /></div>
+        <div class="field"><label for="phone">Phone <span class="req">*</span></label><input type="tel" id="phone" name="phone" autocomplete="off" required /></div>
+      </div>
+      <div class="field"><label for="location">Location (City) <span class="req">*</span></label><input type="text" id="location" name="location" autocomplete="off" /></div>
+      <div class="field"><label for="resume">Resume/CV <span class="req">*</span></label><input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx" /></div>
+      <div class="row2">
+        <div class="field"><label for="linkedin">LinkedIn Profile</label><input type="url" id="linkedin" name="linkedin" autocomplete="off" /></div>
+        <div class="field"><label for="website">Website or GitHub</label><input type="url" id="website" name="website" autocomplete="off" /></div>
+      </div>
+      <div class="field"><label for="current_company">Current Company</label><input type="text" id="current_company" name="current_company" autocomplete="off" /></div>
+
+      <div class="field">
+        <label for="authorized">Are you legally authorized to work in the United States? <span class="req">*</span></label>
+        <select id="authorized" name="authorized"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+      </div>
+      <fieldset>
+        <legend>Will you now or in the future require sponsorship for employment visa status? <span class="req">*</span></legend>
+        <div class="radio">
+          <label><input type="radio" name="sponsorship" value="Yes" /> Yes</label>
+          <label><input type="radio" name="sponsorship" value="No" /> No</label>
+        </div>
+      </fieldset>
+      <div class="field">
+        <label for="source">How did you hear about this job?</label>
+        <select id="source" name="source"><option value="">Select...</option><option>LinkedIn</option><option>Company website</option><option>Referral</option><option>Job board</option><option>Other</option></select>
+      </div>
+      <div class="field">
+        <label for="why">Why do you want to work on the Platform team at Northwind Labs? <span class="req">*</span></label>
+        <textarea id="why" name="why"></textarea>
+        <span class="hint">2–4 sentences is plenty.</span>
+      </div>
+      <div class="field">
+        <label for="cover_letter">Cover Letter</label>
+        <textarea id="cover_letter" name="cover_letter"></textarea>
+        <span class="hint">Optional. Choose "AI-written for each job" under Cover letter in Hiresprint to see it filled.</span>
+      </div>
+
+      <h2 class="section-title">Voluntary self-identification</h2>
+      <p class="hint">Optional. Hiresprint only fills these if you've saved answers for them.</p>
+      <div class="row2">
+        <div class="field"><label for="gender">Gender</label><select id="gender" name="gender"><option value="">Select...</option><option>Male</option><option>Female</option><option>Non-binary</option><option>I don't wish to answer</option></select></div>
+        <div class="field"><label for="veteran">Veteran Status</label><select id="veteran" name="veteran"><option value="">Select...</option><option>I am a protected veteran</option><option>I am not a protected veteran</option><option>I don't wish to answer</option></select></div>
+      </div>
+
+      <p style="margin-top:22px"><button type="submit">Submit application</button></p>
+    </form>
+  </main>
+  <script src="/practice.js"></script>
+</body>
+</html>

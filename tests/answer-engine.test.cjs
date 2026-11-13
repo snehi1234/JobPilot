@@ -50,6 +50,19 @@ test("special rules: phone country code, today's date, source, visa, sponsorship
   assert.equal(v[6], "Yes");
 });
 
+test("sponsorship questions that mention visa status get the sponsorship answer, not the visa type", async () => {
+  const { resolveLocally } = await load();
+  const structured = { ...profile, workAuth: "Yes", sponsorship: "No" };
+  const fields = [
+    f(1, "Will you now or in the future require sponsorship for employment visa status? *", "radio"),
+    f(2, "What is your current visa status?"),
+  ];
+  const { suggestions } = resolveLocally(fields, { structured, context: {} });
+  const v = Object.fromEntries(suggestions.map((s) => [s.id, s.value]));
+  assert.equal(v[1], "No");
+  assert.equal(v[2], "Yes");
+});
+
 test("questions about other people are never answered with the user's details", async () => {
   const { resolveLocally } = await load();
   const { suggestions } = resolveLocally(
@@ -133,7 +146,7 @@ test("library answers need a close question match and only fill long questions",
 test("user-facing extension pages never name internal vendors or plans", () => {
   const fs = require("node:fs");
   const root = path.join(__dirname, "..");
-  for (const file of ["sidepanel.html", "onboarding.html", "privacy.html", "terms.html", "sidepanel.js", "content.js", "content-ui.js", "content-match.js", "content-workday.js",
+  for (const file of ["sidepanel.html", "onboarding.html", "privacy.html", "terms.html", "sidepanel.js", "content.js", "content-ui.js", "content-match.js", "content-workday.js", "content-ats.js",
     "backend/public/index.html", "backend/public/privacy.html", "backend/public/terms.html", "backend/public/admin.html", "backend/public/admin.js"]) {
     const text = fs.readFileSync(path.join(root, file), "utf8");
     assert.doesNotMatch(text, /\b(groq|supabase|vercel|gemini|gpt-oss)\b|free[- ]tier|free plan|paid provider/i, file);

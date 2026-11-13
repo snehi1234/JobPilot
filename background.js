@@ -6,6 +6,74 @@ import { getIdToken, signIn } from "./auth.js";
 import { resolveLocally, rememberAnswers, profileVersion, recordCorrection, isLongQuestion, isCoverLetterField } from "./lib/answer-engine.mjs";
 import { pickResume, companyKey, extractSkills } from "./lib/match-score.mjs";
 import { postingUrlCandidates, extractJobDescription } from "./lib/job-description.mjs";
+import { createTelemetry, platformOf, shouldAskForRating, applyRatingAction, RATE_AFTER_FILLS } from "./lib/telemetry.mjs";
+
+// ---------- Usage stats (anonymous counts; can be turned off in the panel) ----------
+
+async function sendEvents(events, installId) {
+  if (!BACKEND_URL) return;
+  const headers = { "Content-Type": "application/json" };
+  // Link to the account only with a still-valid token; never trigger a sign-in.
+  const { auth } = await chrome.storage.local.get("auth");
+  if (auth?.idToken && auth.exp && Date.now() / 1000 < auth.exp - 60) headers.Authorization = `Bearer ${auth.idToken}`;
+  const res = await fetch(`${BACKEND_URL}/api/events`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ installId, version: chrome.runtime.getManifest().version, events }),
+  });
+  if (!res.ok && res.status !== 400) throw new Error(`events ${res.status}`);
+}
+
+const telemetry = createTelemetry({ storage: chrome.storage.local, send: sendEvents, flushDelayMs: 10_000 });
+const PRACTICE_ORIGIN = (() => { try { return new URL(BACKEND_URL).origin; } catch { return ""; } })();
+
+async function updateUninstallUrl() {
+  if (!BACKEND_URL) return;
+  const on = await telemetry.enabled();
+  const id = on ? await telemetry.installId() : "";
+  const v = chrome.runtime.getManifest().version;
+  const url = on ? `${BACKEND_URL}/api/events?uninstall=1&i=${encodeURIComponent(id)}&v=${encodeURIComponent(v)}` : `${BACKEND_URL}/goodbye.html`;
+  await Promise.resolve(chrome.runtime.setUninstallURL?.(url)).catch(() => {});
+}
+updateUninstallUrl().catch(() => {});
+telemetry.flush().catch(() => {});
+
+// Time spent with the side panel open.
+chrome.runtime.onConnect?.addListener((port) => {
+  if (port.name !== "panel") return;
+  const opened = Date.now();
+  port.onDisconnect.addListener(() => {
+    const seconds = Math.round((Date.now() - opened) / 1000);
+    if (seconds >= 3) telemetry.track("panel_session", { seconds });
+  });
+});
+
+async function trackEvent({ name, props = {} }, sender) {
+  const url = sender?.url || sender?.tab?.url || "";
+  const clean = { ...props };
+  if (url && sender?.tab) clean.platform = platformOf(url, PRACTICE_ORIGIN);
+  await telemetry.track(name, clean);
+  if (name !== "autofill") return { ok: true };
+  if (Number(props.fields) >= 1) {
+    const step = clean.platform === "practice" ? "practice" : "real";
+    const { onboardingProgress = {} } = await chrome.storage.local.get("onboardingProgress");
+    if (!onboardingProgress[step]) await chrome.storage.local.set({ onboardingProgress: { ...onboardingProgress, [step]: Date.now() } });
+    if (step === "practice") return { ok: true, askRating: false };
+  }
+  const { ratingState = {} } = await chrome.storage.local.get("ratingState");
+  if (Number(props.fields) >= 3) ratingState.successfulFills = (ratingState.successfulFills || 0) + 1;
+  await chrome.storage.local.set({ ratingState });
+  const askRating = shouldAskForRating(ratingState);
+  if (askRating) telemetry.track("rate_prompt", { action: "shown" });
+  return { ok: true, askRating };
+}
+
+async function ratingAction({ action }) {
+  const { ratingState = {} } = await chrome.storage.local.get("ratingState");
+  await chrome.storage.local.set({ ratingState: applyRatingAction(ratingState, action) });
+  if (["rate", "later", "never", "feedback"].includes(action)) telemetry.track("rate_prompt", { action });
+  return { ok: true };
+}
 
 // Make clicking the toolbar icon open the side panel automatically.
 chrome.sidePanel
@@ -20,7 +88,11 @@ chrome.runtime.onInstalled.addListener((details) => {
   // On first install, open the welcome/onboarding page.
   if (details.reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
+    telemetry.track("install");
+  } else if (details.reason === "update" && details.previousVersion !== chrome.runtime.getManifest().version) {
+    telemetry.track("update", { from: details.previousVersion });
   }
+  updateUninstallUrl().catch(() => {});
   // After an install or update, pages that were already open still run the
   // previous copy of the content scripts, which can no longer reach the
   // extension. Load the current version into them so the button works
@@ -33,7 +105,7 @@ async function reinjectContentScripts() {
   await Promise.all(tabs.map((tab) =>
     chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
-      files: ["content-ui.js", "content-match.js", "content-workday.js", "content.js"],
+      files: ["content-ui.js", "content-match.js", "content-workday.js", "content-ats.js", "content.js"],
     }).catch(() => {}) // restricted pages (e.g. the Web Store) can't be scripted
   ));
 }
@@ -160,7 +232,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // keep the channel open for async response
   }
 
+  if (message.type === "TRACK") {
+    trackEvent(message, sender)
+      .then((result) => sendResponse(result))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   const handlers = {
+    RATING_ACTION: ratingAction,
+    RATING_STATE: async () => {
+      const { ratingState = {} } = await chrome.storage.local.get("ratingState");
+      return { ask: shouldAskForRating(ratingState), fills: ratingState.successfulFills || 0, needed: RATE_AFTER_FILLS };
+    },
+    SET_USAGE_STATS: async ({ enabled }) => {
+      await telemetry.setEnabled(enabled !== false);
+      await updateUninstallUrl();
+      return { ok: true };
+    },
     PICK_RESUME: chooseResume,
     // Fetch the job description in the background when an application page
     // opens, so it's ready when the user clicks Autofill.
@@ -180,13 +269,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     WRITE_COVER_LETTER: writeCoverLetter,
     SAVE_COVER_LETTER: saveCoverLetter,
     GET_COVER_LETTER_FILE: async () => (await chrome.storage.local.get("coverLetterFile")).coverLetterFile || null,
-    SEND_FEEDBACK: ({ feedback }) => callBackendWithAuth("/api/feedback", {
-      type: feedback?.type,
-      message: feedback?.message,
-      contactOk: feedback?.contactOk === true,
-      includeDetails: feedback?.includeDetails !== false,
-      details: feedback?.includeDetails === false ? {} : feedback?.details,
-    }),
+    SEND_FEEDBACK: async ({ feedback }) => {
+      const result = await callBackendWithAuth("/api/feedback", {
+        type: feedback?.type,
+        message: feedback?.message,
+        contactOk: feedback?.contactOk === true,
+        includeDetails: feedback?.includeDetails !== false,
+        details: feedback?.includeDetails === false ? {} : feedback?.details,
+      });
+      telemetry.track("feedback");
+      return result;
+    },
   };
   const handler = handlers[message.type];
   if (handler) {
@@ -343,17 +436,19 @@ async function tailorResume({ resumeId, jobContext, url, regenerate }) {
   const resume = resumes.find((r) => r.id === resumeId) || resumes[0];
   if (!resume?.text) throw new Error("Upload a resume first.");
   const job = jobContext?.noFetch ? jobContext : await enrichJobContext(jobContext, url);
-  const key = `${jobKey(job, url)}|${resume.id}`;
+  const key = `${jobKey(job, url)}|${resume.id}|v2`; // v2: whole bullets
   const { tailorCache = {} } = await chrome.storage.local.get("tailorCache");
   if (!regenerate && tailorCache[key]?.result) return { ...tailorCache[key].result, cached: true, resumeId: resume.id };
   const result = await callBackendWithAuth("/api/tailor", {
     resume: resume.text,
     jobContext: { title: job.title, company: job.company, description: job.description },
+    wholeBullets: true,
   });
   const next = { ...tailorCache, [key]: { result, at: Date.now() } };
   const keys = Object.keys(next).sort((a, b) => next[a].at - next[b].at);
   for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete next[k];
   await chrome.storage.local.set({ tailorCache: next });
+  telemetry.track("tailor");
   return { ...result, resumeId: resume.id };
 }
 
@@ -367,6 +462,7 @@ async function saveTailored({ jobContext, url, baseResumeId, fileName, data, tex
   const keys = Object.keys(next).sort((a, b) => next[a].at - next[b].at);
   for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete next[k];
   await chrome.storage.local.set({ tailoredResumes: next });
+  telemetry.track("tailor_used");
   return { ok: true };
 }
 
@@ -390,6 +486,7 @@ async function writeCoverLetter({ jobContext, url, resumeId, profile, structured
   const { letter } = await callBackendWithAuth("/api/cover-letter", { jobContext, profile, structured });
   if (!letter) throw new Error("No cover letter was returned. Please try again.");
   await storeCoverLetter(coverLetterCache, key, letter);
+  telemetry.track("cover_letter");
   return { letter };
 }
 

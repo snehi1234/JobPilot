@@ -45,7 +45,7 @@ export default async function handler(req, res) {
 
   try {
     const raw = extractJson(await callAI(buildTailorPrompt({ resume, jobContext }), TAILOR_GEN_CONFIG));
-    const result = sanitizeTailoring(raw, resume);
+    const result = sanitizeTailoring(raw, resume, { wholeBullets: body.wholeBullets === true });
     if (!result.bullets.length && !result.summary) throw new Error("No grounded suggestions");
     return res.status(200).json(result);
   } catch (err) {

@@ -7,7 +7,7 @@
 
 import { readJsonBody } from "../lib/http.js";
 import { getUserFromRequest } from "../lib/auth.js";
-import { isDbConfigured, listFeedback, updateFeedbackStatus } from "../lib/db.js";
+import { isDbConfigured, listFeedback, updateFeedbackStatus, getAdminMetrics } from "../lib/db.js";
 import { isAdmin, toAdminView, FEEDBACK_STATUSES } from "../lib/feedback.js";
 
 export default async function handler(req, res) {
@@ -30,6 +30,11 @@ export default async function handler(req, res) {
   if (!isDbConfigured()) return res.status(503).json({ error: "Database not configured." });
 
   try {
+    if (req.method === "GET" && req.query?.view === "metrics") {
+      const days = Math.min(90, Math.max(7, Number(req.query?.days) || 30));
+      const metrics = await getAdminMetrics(days);
+      return res.status(200).json({ admin: user.email, metrics });
+    }
     if (req.method === "GET") {
       const rows = await listFeedback(500);
       return res.status(200).json({ admin: user.email, reports: rows.map(toAdminView) });

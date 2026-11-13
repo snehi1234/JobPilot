@@ -3,75 +3,242 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HiresprintAI — AI Autofill for Job Applications</title>
-  <meta name="description" content="HiresprintAI is a Chrome extension that uses AI to autofill job application forms from your resume and profile, so you can apply to jobs faster." />
+  <title>Hiresprint — AI Job Application Autofill, Resume Tailoring &amp; Match Score</title>
+  <meta name="description" content="Hiresprint is a free Chrome extension that autofills job applications on Workday, Greenhouse, Lever, Ashby and more, scores your resume against each job, tailors it in one click, and writes cover letters." />
   <meta name="google-site-verification" content="GR-S2zUL7TnwVpyG-x0WYfxdxcpnDwmsacbf21zLzLw" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Hiresprint — apply to jobs in minutes, not hours" />
+  <meta property="og:description" content="AI autofill for job applications, resume match scores, one-click resume tailoring, ATS check, and cover letters. Free Chrome extension." />
+  <meta property="og:image" content="/img/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="theme-color" content="#4a3aff" />
   <link rel="icon" href="/icon128.png" />
-  <link rel="stylesheet" href="/legal.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "Hiresprint",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Chrome",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "description": "AI job application autofill with resume match scores, resume tailoring, ATS check, and cover letters.",
+        "url": "https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep"
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          { "@type": "Question", "name": "Is Hiresprint free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Hiresprint is free to use with a fair monthly usage limit." } },
+          { "@type": "Question", "name": "Which job sites does Hiresprint support?", "acceptedAnswer": { "@type": "Answer", "text": "Workday, Greenhouse, Lever, Ashby, iCIMS, SmartRecruiters, Taleo, SuccessFactors, and most company career sites. Match scores also appear on LinkedIn, Indeed, and Glassdoor job pages." } },
+          { "@type": "Question", "name": "Does Hiresprint submit applications for me?", "acceptedAnswer": { "@type": "Answer", "text": "No. Hiresprint fills the form and shows a checklist; you review every answer and submit the application yourself." } },
+          { "@type": "Question", "name": "Will tailoring invent experience?", "acceptedAnswer": { "@type": "Answer", "text": "No. Tailoring only rewrites your own bullet points and never adds new numbers, skills, or jobs. You accept or reject each change." } }
+        ]
+      }
+    ]
+  }
+  </script>
+  <style>
+    :root { --brand: #4a3aff; --brand2: #7c3aed; --ink: #14142b; --muted: #5b6478; --line: #e7e9f2; --bg: #f7f7fc; }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: #fff; }
+    a { color: var(--brand); }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+    nav { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+    nav .wrap { display: flex; align-items: center; gap: 22px; height: 62px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; color: var(--ink); text-decoration: none; }
+    .brand img { width: 32px; height: 32px; border-radius: 8px; }
+    nav .links { margin-left: auto; display: flex; gap: 20px; align-items: center; font-size: 15px; }
+    nav .links a { color: var(--muted); text-decoration: none; }
+    nav .links a.cta { color: #fff; }
+    @media (max-width: 720px) { nav .links a:not(.cta) { display: none; } }
+    .cta { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--brand), var(--brand2)); color: #fff !important; text-decoration: none; font-weight: 700; border-radius: 12px; padding: 10px 18px; box-shadow: 0 6px 18px rgba(74,58,255,.28); }
+    .cta.big { font-size: 18px; padding: 15px 26px; border-radius: 14px; }
+    .ghost { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); text-decoration: none; font-weight: 600; padding: 15px 18px; }
+    header.hero { background: radial-gradient(1200px 500px at 70% -10%, #ece9ff 0%, transparent 60%), radial-gradient(900px 400px at 0% 0%, #f3e8ff 0%, transparent 55%); padding: 70px 0 40px; }
+    .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center; }
+    @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; } }
+    .pill { display: inline-block; background: #fff; border: 1px solid #ddd6fe; color: #5b21b6; border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 600; }
+    h1 { font-size: clamp(36px, 5vw, 56px); line-height: 1.07; margin: 16px 0 14px; letter-spacing: -.02em; }
+    h1 .grad { background: linear-gradient(135deg, var(--brand), var(--brand2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lead { font-size: 19px; color: var(--muted); max-width: 540px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 26px 0 10px; }
+    .small { color: var(--muted); font-size: 14px; }
+    .shot { border-radius: 16px; border: 1px solid var(--line); box-shadow: 0 24px 60px rgba(20,20,43,.16); width: 100%; height: auto; display: block; background: #fff; }
+    .logos { display: flex; flex-wrap: wrap; gap: 10px 26px; justify-content: center; color: #8a90a6; font-weight: 700; font-size: 15px; padding: 26px 0 6px; }
+    section { padding: 70px 0; }
+    section.alt { background: var(--bg); }
+    h2 { font-size: clamp(28px, 3.4vw, 38px); margin: 0 0 10px; letter-spacing: -.01em; text-align: center; }
+    .sub { color: var(--muted); text-align: center; max-width: 640px; margin: 0 auto 40px; font-size: 18px; }
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    @media (max-width: 900px) { .features { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 600px) { .features { grid-template-columns: 1fr; } }
+    .feature { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+    .feature .ico { font-size: 26px; }
+    .feature h3 { margin: 8px 0 6px; font-size: 18px; }
+    .feature p { margin: 0; color: var(--muted); font-size: 15px; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; margin: 0 0 60px; }
+    .split:last-child { margin-bottom: 0; }
+    .split.rev > :first-child { order: 2; }
+    @media (max-width: 900px) { .split, .split.rev { grid-template-columns: 1fr; } .split.rev > :first-child { order: 0; } }
+    .split h3 { font-size: 26px; margin: 0 0 10px; }
+    .split p { color: var(--muted); }
+    .split ul { padding-left: 20px; color: var(--muted); }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; counter-reset: s; }
+    @media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
+    .step { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 22px; position: relative; }
+    .step::before { counter-increment: s; content: counter(s); display: inline-flex; width: 32px; height: 32px; border-radius: 50%; align-items: center; justify-content: center; background: #eef2ff; color: var(--brand); font-weight: 800; margin-bottom: 8px; }
+    .step h3 { margin: 4px 0 6px; font-size: 18px; }
+    .step p { margin: 0; color: var(--muted); font-size: 15px; }
+    .trust { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    @media (max-width: 900px) { .trust { grid-template-columns: 1fr 1fr; } }
+    .trust div { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 18px; font-size: 15px; color: var(--muted); }
+    .trust b { display: block; color: var(--ink); margin-bottom: 4px; }
+    .faq { max-width: 780px; margin: 0 auto; }
+    details { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin: 10px 0; }
+    summary { cursor: pointer; font-weight: 700; }
+    details p { color: var(--muted); margin: 8px 0 0; }
+    .final { text-align: center; background: linear-gradient(135deg, #1e1b4b, #4a3aff); color: #fff; border-radius: 24px; padding: 54px 24px; }
+    .final h2 { color: #fff; }
+    .final p { color: #c7d2fe; font-size: 18px; }
+    .final .cta { background: #fff; color: var(--brand) !important; }
+    footer { border-top: 1px solid var(--line); padding: 26px 0; color: var(--muted); font-size: 14px; }
+    footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; }
+    footer .right { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
+    footer a { color: var(--muted); }
+  </style>
 </head>
 <body>
-  <main class="wrap">
-    <header class="hero">
-      <img src="/icon128.png" alt="HiresprintAI logo" width="72" height="72" style="border-radius:16px; box-shadow:0 6px 20px rgba(74,58,255,0.3);" />
-      <h1>HiresprintAI</h1>
-      <p class="sub">AI-powered autofill for job applications — apply faster, everywhere.</p>
-    </header>
+  <nav>
+    <div class="wrap">
+      <a class="brand" href="/"><img src="/icon128.png" alt="" />Hiresprint</a>
+      <div class="links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#faq">FAQ</a>
+        <a class="cta" href="https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep" rel="noopener">Add to Chrome — free</a>
+      </div>
+    </div>
+  </nav>
 
-    <section class="step">
-      <h3>What is HiresprintAI?</h3>
-      <p>
-        HiresprintAI is a free Chrome extension that helps job seekers — students
-        and professionals alike — fill out online job application forms
-        automatically. You fill in your details and upload your resume once;
-        HiresprintAI then uses AI to read each job application form and generate
-        suggested answers. AI can make mistakes; review all answers before
-        submitting an application.
+  <header class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="pill">⚡ Free Chrome extension</span>
+        <h1>Apply to jobs in <span class="grad">minutes</span>, not hours.</h1>
+        <p class="lead">Hiresprint fills job applications from your resume, shows how well you match each job,
+          and tailors your resume in one click — on Workday, Greenhouse, Lever, and thousands of company sites.</p>
+        <div class="actions">
+          <a class="cta big" href="https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep" rel="noopener">Add to Chrome — it's free</a>
+          <a class="ghost" href="#how">See how it works →</a>
+        </div>
+        <p class="small">No credit card. You review and submit every application yourself.</p>
+      </div>
+      <img class="shot" src="/img/shot-autofill.png" alt="Hiresprint autofilling a job application with a review checklist" width="1280" height="800" />
+    </div>
+    <div class="wrap logos" aria-label="Works on">
+      <span>Workday</span><span>Greenhouse</span><span>Lever</span><span>Ashby</span><span>iCIMS</span>
+      <span>SmartRecruiters</span><span>Taleo</span><span>SuccessFactors</span><span>LinkedIn</span><span>Indeed</span>
+    </div>
+  </header>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Everything you need to apply faster</h2>
+      <p class="sub">Set up once in about two minutes. Then every application takes a click and a quick review.</p>
+      <div class="features">
+        <div class="feature"><div class="ico">⚡</div><h3>One-click autofill</h3><p>Fills contact details, work history, education, dropdowns, and screening questions from your profile — even multi-step forms.</p></div>
+        <div class="feature"><div class="ico">🎯</div><h3>Resume match score</h3><p>See how well each of your resumes fits a job right on LinkedIn, Indeed, and company pages — with matched and missing skills.</p></div>
+        <div class="feature"><div class="ico">✨</div><h3>Tailor your resume</h3><p>Rewrites your own bullets to match the job. Never invents experience. Accept each change, then download a PDF.</p></div>
+        <div class="feature"><div class="ico">🤖</div><h3>ATS check</h3><p>Find out how applicant tracking systems read your resume and fix what's holding it back.</p></div>
+        <div class="feature"><div class="ico">📝</div><h3>Cover letters</h3><p>An AI-written letter for each job, or your own file — pasted or attached as a PDF automatically.</p></div>
+        <div class="feature"><div class="ico">🗂️</div><h3>Answer Studio</h3><p>Set salary by role, notice period, relocation, and other common answers once. Reused everywhere.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <div class="split">
+        <img class="shot" src="/img/shot-match.png" alt="Resume match badge on a job posting" width="1280" height="800" loading="lazy" />
+        <div>
+          <h3>Know where you stand before you apply</h3>
+          <p>Hiresprint scores every resume you've saved against the job description and picks the best one automatically.</p>
+          <ul><li>Works on LinkedIn, Indeed, Glassdoor, and company career pages</li><li>Matched and missing skills at a glance</li><li>Up to five resumes — e.g. one for backend, one for data</li></ul>
+        </div>
+      </div>
+      <div class="split rev">
+        <img class="shot" src="/img/shot-tailor.png" alt="Tailoring a resume for a job in the Hiresprint side panel" width="1280" height="800" loading="lazy" />
+        <div>
+          <h3>A tailored resume for every job — honestly</h3>
+          <p>Hiresprint rewrites your existing bullets to use the job's language. It never adds numbers, skills, or roles you don't have.</p>
+          <ul><li>See your match score before → after</li><li>Accept or reject each change</li><li>Attach it to the application automatically</li></ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="sub">Three steps. Your first autofill takes about two minutes.</p>
+      <div class="steps">
+        <div class="step"><h3>Add Hiresprint to Chrome</h3><p>Sign in with Google and upload your resume. Your details fill in automatically — just check them.</p></div>
+        <div class="step"><h3>Open any job application</h3><p>Click ⚡ Autofill. Hiresprint picks your best-matching resume, attaches it, and fills the form.</p></div>
+        <div class="step"><h3>Review and submit</h3><p>A colour-coded checklist shows what came from your profile and what to review. Undo everything in one click.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="privacy" class="alt">
+    <div class="wrap">
+      <h2>You stay in control</h2>
+      <p class="sub">Built for people who care about what gets sent where.</p>
+      <div class="trust">
+        <div><b>You submit, always</b>Hiresprint never clicks submit. Review every answer first.</div>
+        <div><b>No invented experience</b>Tailoring only rewrites what's already on your resume.</div>
+        <div><b>Your data, your call</b>Delete your profile from the side panel any time. Automatic filling is off by default.</div>
+        <div><b>Files stay local</b>Your resume files stay in your browser; only their text is saved to your account.</div>
+      </div>
+      <p class="small" style="text-align:center;margin-top:22px">
+        When you autofill, the relevant profile details and the form's questions are processed by our AI service to generate answers.
+        AI can make mistakes. Read our <a href="/privacy.html">Privacy Policy</a> and <a href="/terms.html">Terms of Service</a>.
       </p>
-    </section>
+    </div>
+  </section>
 
-    <section class="step">
-      <h3>How it works</h3>
-      <p>
-        1. Sign in with Google and set up your profile (contact details, work
-        history, resume) in the extension's side panel.<br />
-        2. Open any supported job application page (Greenhouse, Lever, Ashby,
-        Workday, and more).<br />
-        3. Click the floating "Autofill" button — HiresprintAI detects the
-        form's fields and fills in suggested answers.<br />
-        4. Alternatively, use the side panel to review and edit suggestions
-        before applying them.<br />
-        5. Automatic filling on page load is off by default. Enable it only
-        after reading and agreeing to the disclosure in the panel. Always
-        review the completed form, attach your resume, and submit it yourself.
-      </p>
-    </section>
+  <section id="faq">
+    <div class="wrap faq">
+      <h2>Questions</h2>
+      <details><summary>Is Hiresprint free?</summary><p>Yes. Hiresprint is free to use, with a fair monthly usage limit so the service stays fast for everyone.</p></details>
+      <details><summary>Which job sites does it work on?</summary><p>Workday, Greenhouse, Lever, Ashby, iCIMS, SmartRecruiters, Taleo, SuccessFactors, and most company career sites. Match scores also show on LinkedIn, Indeed, and Glassdoor job pages. Some sites need you to sign in or click "Apply manually" first; Hiresprint tells you when.</p></details>
+      <details><summary>Does it submit applications for me?</summary><p>No. Hiresprint fills the form and shows a checklist of anything to review. You submit each application yourself.</p></details>
+      <details><summary>Will the tailored resume make things up?</summary><p>No. Tailoring only rewrites your own bullet points and never adds numbers, skills, or jobs. You approve every change.</p></details>
+      <details><summary>Can I try it without applying anywhere?</summary><p>Yes — after installing, open the <a href="/practice.html">practice application</a> and click ⚡ Autofill. Nothing on it is ever submitted.</p></details>
+      <details><summary>How do I get help?</summary><p>Use "Report a problem" in the side panel, or email <a href="mailto:hiresprint.support@gmail.com">hiresprint.support@gmail.com</a>.</p></details>
+    </div>
+  </section>
 
-    <section class="step">
-      <h3>Your privacy</h3>
-      <p>
-        Your saved details and resume are stored securely in your account.
-        AI processing sends your profile, resume text, optional demographics,
-        form fields, and job details to our AI service to generate answers.
-        If you opt into automatic filling, this happens on recognized job
-        pages without another click. Disable it or delete your saved profile
-        from the panel. Read our
-        <a href="/privacy.html">Privacy Policy</a> and
-        <a href="/terms.html">Terms of Service</a> for details.
-      </p>
-    </section>
+  <section>
+    <div class="wrap final">
+      <h2>Your next application could take two minutes.</h2>
+      <p>Join job seekers applying faster with Hiresprint.</p>
+      <a class="cta big" href="https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep" rel="noopener">Add to Chrome — free</a>
+    </div>
+  </section>
 
-    <section class="step">
-      <h3>Contact</h3>
-      <p>
-        Questions? Email us at
-        <a href="mailto:hiresprint.support@gmail.com">hiresprint.support@gmail.com</a>.
-      </p>
-    </section>
-
-    <p class="foot">
-      <a href="/privacy.html">Privacy Policy</a> &nbsp;·&nbsp;
-      <a href="/terms.html">Terms of Service</a>
-    </p>
-  </main>
+  <footer>
+    <div class="wrap">
+      <span>© Hiresprint</span>
+      <div class="right">
+        <a href="/practice.html">Practice form</a>
+        <a href="/privacy.html">Privacy Policy</a>
+        <a href="/terms.html">Terms of Service</a>
+        <a href="mailto:hiresprint.support@gmail.com">hiresprint.support@gmail.com</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>

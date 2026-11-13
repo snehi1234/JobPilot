@@ -591,6 +591,29 @@ function jpHideChecklist() {
 function jpShowChecklist(state) {
   jpChecklistState = state;
   jpRenderChecklist();
+  // Counts only (no page content). The reply says whether to ask for a rating.
+  chrome.runtime.sendMessage({
+    type: "TRACK", name: "autofill",
+    props: { fields: jpFillRecords.size, count: (state.needs || []).length },
+  }).then((reply) => {
+    if (reply?.askRating && jpChecklistState === state) {
+      state.askRating = true;
+      jpRenderChecklist();
+    }
+  }).catch(() => {});
+}
+
+var JP_REVIEW_URL = "https://chromewebstore.google.com/detail/gnohpngndnfdlbacmbmnoilgeaeljhep/reviews";
+
+function jpRatingAction(action) {
+  chrome.runtime.sendMessage({ type: "RATING_ACTION", action }).catch(() => {});
+  if (action === "rate") window.open(JP_REVIEW_URL, "_blank", "noopener");
+  if (action === "feedback") jpOpenFeedback("idea");
+  if (jpChecklistState) {
+    jpChecklistState.askRating = false;
+    jpChecklistState.rated = action === "rate";
+    jpRenderChecklist();
+  }
 }
 
 function jpFocusField(id) {
@@ -662,6 +685,9 @@ function jpRenderChecklist() {
       .actions { display: flex; gap: 8px; margin-top: 10px; }
       .btn { flex: 1; border: none; border-radius: 8px; padding: 8px; font-weight: 600; cursor: pointer; }
       .undo { background: #e2e8f0; color: #1a1a2e; } .done { background: #4a3aff; color: #fff; }
+      .rate { margin: 10px 0 2px; padding: 8px 10px; border-radius: 8px; background: #f5f3ff; border: 1px solid #ddd6fe; }
+      .rate-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      .rate-actions .mini { margin-left: 0; }
     </style>
     <div class="panel" role="dialog" aria-label="Hiresprint autofill checklist">
       <div class="head"><span>⚡ Hiresprint · Filled ${records.length} field${records.length === 1 ? "" : "s"}</span>
@@ -682,6 +708,11 @@ function jpRenderChecklist() {
       ${attach ? `<div class="row">${jpEscape(attach)}</div>` : ""}
       ${coverText ? `<div class="row">${jpEscape(coverText)}${state.cover?.status === "added" && jpCoverLetter?.text ? ` <button class="mini" data-cover-edit>Edit</button>` : ""}</div>` : ""}
       <div class="row" style="color:#64748b">Review everything, then submit the application yourself. <a data-feedback>Something wrong? Report it</a></div>
+      ${state.askRating ? `<div class="rate" role="group" aria-label="Rate Hiresprint">
+        <div><b>Is Hiresprint saving you time?</b> A quick rating helps other job seekers find it.</div>
+        <div class="rate-actions"><button class="mini" data-rate="rate">⭐ Rate it</button><button class="mini" data-rate="later">Later</button><button class="mini" data-rate="feedback">Not really — tell us why</button><button class="mini" data-rate="never">Don't ask again</button></div>
+      </div>` : ""}
+      ${state.rated ? `<div class="row" style="color:#166534">Thank you for rating Hiresprint! 💜</div>` : ""}
       <div class="actions"><button class="btn undo">Undo all</button><button class="btn done">Done</button></div>
     </div>`;
   root.querySelector(".close").onclick = jpHideChecklist;
@@ -692,6 +723,7 @@ function jpRenderChecklist() {
   root.querySelectorAll("[data-save]").forEach((b) => (b.onclick = () => jpSaveDraft(b.dataset.save, b)));
   const feedbackLink = root.querySelector("[data-feedback]");
   if (feedbackLink) feedbackLink.onclick = () => jpOpenFeedback(state.needs?.length ? "bug" : "other");
+  root.querySelectorAll("[data-rate]").forEach((b) => (b.onclick = () => jpRatingAction(b.dataset.rate)));
   const coverEdit = root.querySelector("[data-cover-edit]");
   if (coverEdit) coverEdit.onclick = jpEditCoverLetter;
   const pick = root.querySelector(".pick");

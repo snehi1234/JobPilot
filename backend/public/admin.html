@@ -51,6 +51,31 @@
     aside li { margin: 3px 0; word-break: break-all; }
     .empty { color: var(--muted); text-align: center; padding: 30px; }
     .error { color: #991b1b; }
+    .muted { color: var(--muted); font-size: 12px; align-self: center; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+    .tab { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 14px; font-weight: 600; color: var(--muted); }
+    .tab.on { color: var(--brand); border-bottom-color: var(--brand); }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .kpi { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .kpi b { display: block; font-size: 24px; }
+    .kpi span { color: var(--muted); font-size: 12px; }
+    .kpi small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+    .panel { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+    .panel h3 { font-size: 14px; margin: 0 0 10px; }
+    .panel .note { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+    .chart svg { width: 100%; height: 180px; display: block; }
+    .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+    .bars .bar { display: grid; grid-template-columns: 130px 1fr 70px; gap: 8px; align-items: center; font-size: 13px; margin: 5px 0; }
+    .bars .track { background: #eef2ff; border-radius: 6px; height: 12px; overflow: hidden; }
+    .bars .fill { background: var(--brand); height: 100%; border-radius: 6px; }
+    .bars .val { text-align: right; color: var(--muted); font-size: 12px; }
+    table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.t th, table.t td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+    table.t th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    table.t td.n, table.t th.n { text-align: right; }
   </style>
 </head>
 <body>
@@ -73,6 +98,22 @@
     </section>
 
     <section id="app" class="hidden">
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab on" data-tab="feedbackView" aria-selected="true">💬 Feedback</button>
+        <button type="button" role="tab" class="tab" data-tab="metricsView" aria-selected="false">📈 Metrics</button>
+      </nav>
+      <div id="metricsView" class="hidden">
+        <div class="toolbar">
+          <select id="metricsDays" aria-label="Period">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <span id="metricsUpdated" class="muted"></span>
+        </div>
+        <div id="metrics"><p class="empty">Loading metrics…</p></div>
+      </div>
+      <div id="feedbackView">
       <div class="stats" id="stats"></div>
       <div class="layout">
         <div>
@@ -94,10 +135,12 @@
           <div class="box"><h3>By version</h3><ol id="versions"></ol></div>
         </aside>
       </div>
+      </div><!-- /#feedbackView -->
     </section>
   </main>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="admin.js" defer></script>
+  <script src="admin-metrics.js" defer></script>
 </body>
 </html>

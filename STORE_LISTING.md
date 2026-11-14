@@ -23,61 +23,39 @@ English (United States)
 
 ## Detailed description
 
-Hiresprint uses AI to suggest and fill answers on job application forms from
-your saved profile and resume. Review every completed application: AI can
-make mistakes.
+> Don't list many job-site names here: 0.7.0 was rejected for "excessive
+> keywords" when the description listed eight applicant tracking systems.
 
-**How it works:**
-1. Sign in with Google and set up your profile once (contact details, work
-   authorization, optional demographics) and upload up to five resumes (PDF or
-   Word), e.g. one for software roles and one for data roles.
-2. Open a job application. Hiresprint detects common application pages, including
-   Greenhouse, Lever, Ashby, Workday, and others. Compatibility varies by site;
-   some custom fields and multi-step forms may need manual entry.
-3. Use "Fill This Form" in the side panel to generate suggestions, edit them,
-   and choose "Apply to Page". The floating "Autofill" button instead fills
-   directly; review its answers on the application page.
-4. Optionally enable automatic filling in the side panel after reading its
-   disclosure. It is OFF by default. When enabled, recognized job pages can
-   be processed and filled on load without another click or prior review.
-5. Hiresprint picks the resume that best matches the job, attaches it, and
-   shows a checklist: green fields came from your profile, blue fields are AI
-   answers to review, amber fields need you. Undo everything with one click.
-6. On multi-step applications, Hiresprint offers to fill each new step.
-7. Review the filled application and submit it yourself.
+Hiresprint helps you apply to jobs faster. It fills in job application forms from your saved profile and resume, shows how well your resume matches each job, and helps you tailor it. Review every completed application before you submit: AI can make mistakes.
 
-**Why Hiresprint:**
-• Uses profile and job context to suggest answers
-• Handles common text fields, dropdowns, and repeated work/education sections
-• Match score for each of your resumes — right on LinkedIn, Indeed, Workday, and company job pages
-• Tailor your resume to a job in one click — rewrites your own bullets, never invents experience, keeps your resume's design, and only suggests changes that raise your match
-• ATS check: see how applicant tracking systems read your resume, with fixes
-• Answer Studio: set salary, notice period, relocation and other common answers once
-• Workday support: dropdowns, searches, dates, and multi-step pages
-• Colour-coded fills, a review checklist, and one-click undo
+How it works:
+1. Sign in with Google, upload your resume (PDF or Word), and check the details Hiresprint fills in for you. You can keep up to five resumes, for example one for software roles and one for data roles.
+2. Open a job posting. Hiresprint shows a match score for your resumes, with the skills you have and the ones you're missing.
+3. Open the application and click Autofill. Hiresprint picks the best-matching resume, attaches it, fills the form, and shows a checklist: green fields come from your profile, blue fields are AI answers to review, and amber fields need you. Undo everything with one click.
+4. Review the filled application and submit it yourself. Hiresprint never submits for you.
+
+Features:
+• Resume match score on job postings and applications
+• Tailor your resume to a job in one click: it rewrites your own bullets in the job's wording, never invents experience, keeps your resume's design, and only suggests changes that raise your match
+• ATS check: see how applicant tracking systems read your resume, with clear fixes
+• Answer Studio: set your salary, notice period, relocation, and other common answers once
+• Cover letters written for each job, or your own file, pasted or attached as a PDF
+• Works with most job application sites, including multi-step and embedded application forms
 • Learns from your corrections and reuses answers you save
-• Drafts long answers you can shorten or expand
-• Cover letters: AI-written for each job, or your own file — pasted or attached as PDF
-• Offers editable suggestions in the side panel
-• Practice application: try Autofill risk-free before your first real application
-• Built-in feedback: report a problem in two clicks from the panel or any application page
-• Lets you disable automatic filling and delete your saved profile
+• Long answers you can shorten or expand
+• A practice application to try Autofill risk-free
+• Built-in feedback to report a problem in two clicks
+• Automatic filling is optional and off by default
 • Free to use, with a fair monthly usage limit
 
-**Your privacy:**
-Hiresprint checks page structure on your device to recognize job applications.
-Your saved details and resume are stored securely in your Hiresprint account.
-When you autofill, the relevant details and the form's questions are processed
-by our AI service to generate answers. Automatic filling is off by default and
-can be turned off anytime. You can delete your saved profile from the side panel.
+Your privacy:
+Hiresprint checks page structure on your device to recognize job applications. Your saved details and resume text are stored securely in your Hiresprint account; the original resume files stay in your browser. When you autofill, the relevant details and the form's questions are processed by our AI service to generate answers. Anonymous usage stats (feature counts only, never your answers, resume, or the pages you visit) help us improve, and you can turn them off in the side panel. You can delete your saved profile at any time.
 
-Read our Privacy Policy: https://backend-alpha-seven-87.vercel.app/privacy.html
-Read our Terms of Service: https://backend-alpha-seven-87.vercel.app/terms.html
-
-Support and privacy requests: hiresprint.support@gmail.com
+Privacy Policy: https://backend-alpha-seven-87.vercel.app/privacy.html
+Terms of Service: https://backend-alpha-seven-87.vercel.app/terms.html
+Support: hiresprint.support@gmail.com
 
 ---
-
 ## Privacy practices / permission justifications
 (Required in the "Privacy practices" tab of the dashboard)
 

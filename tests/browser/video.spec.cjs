@@ -1,18 +1,27 @@
 // Records the Chrome Web Store demo video from the real extension UI, in sync
 // with the narration. Run through tests/browser/make-video.cjs (not part of the
-// normal suite). Frames are captured at 1920x1080 over the DevTools protocol.
+// normal suite). Frames are captured at 3200x1800 over the DevTools protocol;
+// make-video.cjs adds camera moves, captions, transitions, music, and effects.
 const fs = require("node:fs");
 const path = require("node:path");
 const { test, expect, profile } = require("./extension.cjs");
 
 const DIR = process.env.JOBPILOT_VIDEO_DIR;
 test.skip(!DIR, "Run tests/browser/make-video.cjs to record the demo video.");
-test.setTimeout(600000);
+test.setTimeout(900000);
 
+const DPR = 2.5; // 1280x720 CSS px → 3200x1800 frames
 const BACKEND = "https://backend-alpha-seven-87.vercel.app";
 const POSTING = "https://job-boards.greenhouse.io/northwindlabs/jobs/42";
 const BEATS = DIR ? JSON.parse(fs.readFileSync(path.join(DIR, "beats.json"), "utf8")) : {};
-const CHAPTERS = ["Set up", "Match score", "Tailor", "Autofill", "ATS check", "Answer Studio"];
+const CHAPTERS = [
+  { name: "Set up", emoji: "🚀", colors: ["#4f46e5", "#06b6d4"] },
+  { name: "Match score", emoji: "🎯", colors: ["#7c3aed", "#ec4899"] },
+  { name: "Tailor your resume", emoji: "✨", colors: ["#0ea5e9", "#22c55e"] },
+  { name: "One-click autofill", emoji: "⚡", colors: ["#f59e0b", "#ef4444"] },
+  { name: "ATS check", emoji: "🤖", colors: ["#10b981", "#3b82f6"] },
+  { name: "Answer Studio", emoji: "🗂️", colors: ["#ec4899", "#8b5cf6"] },
+];
 
 const RESUME_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
 body{font:10.5pt "Times New Roman",serif;margin:40px 52px;color:#111}h1{text-align:center;margin:0;font-size:20pt}.c{text-align:center;margin:2px 0 6px}
@@ -58,23 +67,22 @@ Your Platform team's focus on reliable services and great developer tooling is e
 Thank you for your consideration,
 Alex Example`;
 
-// ---------- 1080p recorder (DevTools screencast) ----------
+// ---------- Recorder (DevTools screencast) ----------
 
-async function record(page, name) {
+async function record(page, name, chapter = 0) {
   const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1.5, mobile: false });
-  await page.waitForTimeout(300);
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: DPR, mobile: false });
+  await page.waitForTimeout(350);
   const frames = [];
   cdp.on("Page.screencastFrame", ({ data, sessionId, metadata }) => {
     frames.push({ data, t: metadata.timestamp });
     cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
   });
-  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 93, maxWidth: 1920, maxHeight: 1080, everyNthFrame: 1 });
+  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 95, maxWidth: 3200, maxHeight: 1800, everyNthFrame: 1 });
   const start = Date.now() / 1000;
-  const voice = [];
-  return {
+  const rec = {
     now: () => Date.now() / 1000 - start,
-    voice,
+    voice: [], captions: [], cam: [{ t: 0, x: 0, y: 0, w: 1280 }], sfx: [], chapter,
     async stop() {
       await page.waitForTimeout(150);
       await cdp.send("Page.stopScreencast").catch(() => {});
@@ -82,23 +90,19 @@ async function record(page, name) {
       const dir = path.join(DIR, `scene-${name}`);
       fs.rmSync(dir, { recursive: true, force: true });
       fs.mkdirSync(dir, { recursive: true });
-      const lines = [];
-      frames.forEach((f, i) => {
+      const list = frames.map((f, i) => {
         const file = path.join(dir, `f${String(i).padStart(5, "0")}.jpg`);
         fs.writeFileSync(file, Buffer.from(f.data, "base64"));
-        const from = i === 0 ? start : f.t;
-        const to = i + 1 < frames.length ? frames[i + 1].t : end;
-        lines.push(`file '${file.replace(/\\/g, "/")}'`, `duration ${Math.max(0.001, to - from).toFixed(4)}`);
+        return { file, t: Math.max(0, f.t - start) };
       });
-      if (frames.length) lines.push(`file '${path.join(dir, `f${String(frames.length - 1).padStart(5, "0")}.jpg`).replace(/\\/g, "/")}'`);
-      fs.writeFileSync(path.join(dir, "frames.txt"), lines.join("\n"));
-      return { name, dir, length: end - start, voice };
+      return { name, dir, frames: list, length: end - start, voice: rec.voice, captions: rec.captions, cam: rec.cam, sfx: rec.sfx, chapter: rec.chapter };
     },
   };
+  return rec;
 }
 
-// Run one narrated beat: actions play while the line is spoken; the beat lasts
-// at least as long as the voice clip.
+// One narrated beat: actions play while the line is spoken; the beat lasts at
+// least as long as the voice clip.
 async function beat(rec, scene, index, actions = async () => {}) {
   const b = BEATS[scene][index];
   const at = rec.now();
@@ -108,7 +112,22 @@ async function beat(rec, scene, index, actions = async () => {}) {
   if (left > 0) await new Promise((r) => setTimeout(r, left * 1000));
 }
 
-// ---------- On-screen effects ----------
+const sfx = (rec, name, delay = 0) => rec.sfx.push({ t: rec.now() + delay, name });
+const caption = (rec, text) => rec.captions.push({ t: rec.now(), text });
+
+// Camera: zoom to a region (in CSS px); make-video.cjs animates between keyframes.
+async function focus(rec, locator, zoom = 1.4) {
+  const box = await locator.boundingBox().catch(() => null);
+  if (!box) return;
+  const w = 1280 / zoom;
+  const h = (w * 9) / 16;
+  const x = Math.min(Math.max(box.x + box.width / 2 - w / 2, 0), 1280 - w);
+  const y = Math.min(Math.max(box.y + box.height / 2 - h / 2, 0), 720 - h);
+  rec.cam.push({ t: rec.now(), x, y, w });
+}
+const wide = (rec) => rec.cam.push({ t: rec.now(), x: 0, y: 0, w: 1280 });
+
+// ---------- In-page effects ----------
 
 async function fx(page) {
   await page.evaluate(() => {
@@ -116,58 +135,72 @@ async function fx(page) {
     const style = document.createElement("style");
     style.id = "__fx";
     style.textContent = `
-      #__cur{position:fixed;left:640px;top:640px;width:28px;height:28px;z-index:2147483647;pointer-events:none;
-        transition:left .75s cubic-bezier(.45,0,.2,1),top .75s cubic-bezier(.45,0,.2,1);filter:drop-shadow(0 3px 4px rgba(0,0,0,.35))}
-      #__cur.click::after{content:"";position:absolute;left:-16px;top:-16px;width:32px;height:32px;border-radius:50%;background:rgba(124,58,237,.45);animation:__ping .5s ease-out}
-      @keyframes __ping{from{transform:scale(.3);opacity:1}to{transform:scale(1.9);opacity:0}}
-      #__cap{position:fixed;left:50%;bottom:30px;transform:translate(-50%,24px) scale(.96);opacity:0;z-index:2147483646;pointer-events:none;
-        background:linear-gradient(135deg,rgba(30,27,75,.95),rgba(74,58,255,.95));color:#fff;font:700 26px/1.25 -apple-system,Segoe UI,Roboto,sans-serif;
-        padding:14px 28px;border-radius:16px;box-shadow:0 14px 40px rgba(30,27,75,.35);transition:all .45s cubic-bezier(.2,.9,.3,1.2);white-space:nowrap}
-      #__cap.on{opacity:1;transform:translate(-50%,0) scale(1)}
-      #__chap{position:fixed;left:24px;top:22px;z-index:2147483646;pointer-events:none;display:flex;gap:8px;align-items:center;
-        font:700 15px -apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b4b;background:rgba(255,255,255,.92);border:1px solid #ddd6fe;
-        border-radius:999px;padding:8px 14px 8px 8px;box-shadow:0 8px 24px rgba(30,27,75,.15);transform:translateX(-140%);transition:transform .6s cubic-bezier(.2,.9,.3,1.2)}
-      #__chap.on{transform:none}
-      #__chap b{background:linear-gradient(135deg,#4a3aff,#7c3aed);color:#fff;border-radius:999px;padding:3px 10px;font-size:13px}
-      #__chap i{display:block;width:120px;height:5px;border-radius:9px;background:#ede9fe;overflow:hidden;font-style:normal}
-      #__chap i::after{content:"";display:block;height:100%;width:var(--p);background:linear-gradient(90deg,#4a3aff,#7c3aed);transition:width .8s}
-      #__spot{position:fixed;z-index:2147483645;pointer-events:none;border-radius:14px;box-shadow:0 0 0 9999px rgba(15,12,40,.38);
+      #__cur{position:fixed;left:640px;top:640px;width:30px;height:30px;z-index:2147483647;pointer-events:none;
+        transition:left .7s cubic-bezier(.45,0,.2,1),top .7s cubic-bezier(.45,0,.2,1);filter:drop-shadow(0 3px 5px rgba(0,0,0,.35))}
+      #__cur.click::before,#__cur.click::after{content:"";position:absolute;left:-18px;top:-18px;width:36px;height:36px;border-radius:50%;border:3px solid #a855f7;animation:__ring .6s ease-out forwards}
+      #__cur.click::after{border-color:#ec4899;animation-delay:.12s}
+      @keyframes __ring{from{transform:scale(.2);opacity:1}to{transform:scale(2.1);opacity:0}}
+      #__spot{position:fixed;z-index:2147483645;pointer-events:none;border-radius:14px;box-shadow:0 0 0 9999px rgba(15,12,40,.32);
         transition:all .55s cubic-bezier(.4,0,.2,1);opacity:0}
       #__spot.on{opacity:1}
-      #__spot::after{content:"";position:absolute;inset:-6px;border-radius:18px;border:3px solid #a78bfa;animation:__pulse 1.4s ease-in-out infinite}
-      @keyframes __pulse{0%,100%{opacity:.95;transform:scale(1)}50%{opacity:.4;transform:scale(1.02)}}
-      #__stat{position:fixed;right:40px;top:90px;z-index:2147483646;pointer-events:none;background:#fff;border-radius:18px;padding:16px 22px;
-        box-shadow:0 20px 50px rgba(30,27,75,.3);font:600 18px -apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b4b;transform:translateY(-20px) scale(.8);opacity:0;
-        transition:all .6s cubic-bezier(.2,.9,.3,1.3)}
+      #__spot::after{content:"";position:absolute;inset:-6px;border-radius:18px;padding:3px;
+        background:conic-gradient(from var(--a),#a855f7,#ec4899,#f59e0b,#22c55e,#06b6d4,#a855f7);
+        -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:__spin 2.2s linear infinite}
+      @property --a{syntax:"<angle>";initial-value:0deg;inherits:false}
+      @keyframes __spin{to{--a:360deg}}
+      #__stat{position:fixed;right:40px;top:90px;z-index:2147483646;pointer-events:none;background:#fff;border-radius:20px;padding:18px 26px;
+        box-shadow:0 24px 60px rgba(30,27,75,.35);font:600 18px -apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b4b;transform:translateY(-30px) scale(.6) rotate(-6deg);opacity:0;
+        transition:all .7s cubic-bezier(.2,1.5,.3,1)}
       #__stat.on{transform:none;opacity:1}
-      #__stat .big{font-size:40px;font-weight:800;background:linear-gradient(135deg,#4a3aff,#db2777);-webkit-background-clip:text;color:transparent;display:block}`;
+      #__stat .big{font-size:44px;font-weight:900;background:linear-gradient(90deg,#4f46e5,#ec4899,#f59e0b);-webkit-background-clip:text;color:transparent;display:block}
+      [data-jobpilot-source]{animation:__glow 1.6s ease-out 1}
+      @keyframes __glow{0%{box-shadow:0 0 0 0 rgba(168,85,247,0)}25%{box-shadow:0 0 0 7px rgba(168,85,247,.45),0 0 26px rgba(236,72,153,.45)}100%{box-shadow:0 0 0 0 rgba(168,85,247,0)}}
+      #__confetti{position:fixed;inset:0;z-index:2147483644;pointer-events:none}`;
     document.documentElement.appendChild(style);
-    for (const id of ["__cur", "__cap", "__chap", "__spot", "__stat"]) {
+    for (const id of ["__cur", "__spot", "__stat"]) {
       const el = document.createElement("div");
       el.id = id;
       document.documentElement.appendChild(el);
     }
-    document.getElementById("__cur").innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28"><path d="M4 2l16 9-7 2-3 7z" fill="#fff" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+    document.getElementById("__cur").innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30"><path d="M4 2l16 9-7 2-3 7z" fill="#fff" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+    // Confetti burst from a point.
+    window.__confetti = (x, y, count = 140) => {
+      let c = document.getElementById("__confetti");
+      if (!c) {
+        c = document.createElement("canvas");
+        c.id = "__confetti";
+        document.documentElement.appendChild(c);
+      }
+      const dpr = window.devicePixelRatio || 1;
+      c.width = innerWidth * dpr; c.height = innerHeight * dpr;
+      const ctx = c.getContext("2d");
+      ctx.scale(dpr, dpr);
+      const colors = ["#a855f7", "#ec4899", "#f59e0b", "#22c55e", "#06b6d4", "#4f46e5", "#ef4444"];
+      const parts = Array.from({ length: count }, () => ({
+        x, y, vx: (Math.random() - 0.5) * 16, vy: -Math.random() * 15 - 4, r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4,
+        w: 6 + Math.random() * 8, h: 4 + Math.random() * 6, c: colors[(Math.random() * colors.length) | 0],
+      }));
+      const t0 = performance.now();
+      const tick = (now) => {
+        const k = (now - t0) / 1000;
+        ctx.clearRect(0, 0, innerWidth, innerHeight);
+        for (const p of parts) {
+          p.vy += 0.45; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+          ctx.save(); ctx.globalAlpha = Math.max(0, 1 - k / 2.4); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+          ctx.fillStyle = p.c; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); ctx.restore();
+        }
+        if (k < 2.5) requestAnimationFrame(tick); else ctx.clearRect(0, 0, innerWidth, innerHeight);
+      };
+      requestAnimationFrame(tick);
+    };
   });
 }
 
-async function caption(page, text) {
+async function confetti(rec, page, locator) {
   await fx(page);
-  await page.evaluate((text) => {
-    const c = document.getElementById("__cap");
-    c.classList.remove("on");
-    setTimeout(() => { c.textContent = text; c.classList.add("on"); }, 220);
-  }, text);
-}
-
-async function chapter(page, n) {
-  await fx(page);
-  await page.evaluate(({ n, names }) => {
-    const c = document.getElementById("__chap");
-    c.innerHTML = `<b>${n}/${names.length}</b><span>${names[n - 1]}</span><i></i>`;
-    c.style.setProperty("--p", `${Math.round(((n - 1) / names.length) * 100)}%`);
-    requestAnimationFrame(() => { c.classList.add("on"); setTimeout(() => c.style.setProperty("--p", `${Math.round((n / names.length) * 100)}%`), 300); });
-  }, { n, names: CHAPTERS });
+  const box = locator ? await locator.boundingBox().catch(() => null) : null;
+  await page.evaluate(({ x, y }) => window.__confetti(x, y), { x: box ? box.x + box.width / 2 : 640, y: box ? box.y + box.height / 2 : 360 });
+  sfx(rec, "chime");
 }
 
 async function spotlight(page, locator, pad = 8) {
@@ -181,13 +214,14 @@ async function spotlight(page, locator, pad = 8) {
   }, { box, pad });
 }
 
-async function stat(page, html) {
+async function stat(rec, page, html) {
   await fx(page);
   await page.evaluate((html) => {
     const s = document.getElementById("__stat");
     s.innerHTML = html;
     requestAnimationFrame(() => s.classList.add("on"));
   }, html);
+  sfx(rec, "pop");
 }
 
 async function moveTo(page, locator) {
@@ -200,10 +234,10 @@ async function moveTo(page, locator) {
     c.style.left = `${x}px`;
     c.style.top = `${y}px`;
   }, { x: box.x + Math.min(box.width / 2, 40), y: box.y + box.height / 2 });
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(760);
 }
 
-async function clickLike(page, locator) {
+async function clickLike(rec, page, locator) {
   await moveTo(page, locator);
   await page.evaluate(() => {
     const c = document.getElementById("__cur");
@@ -211,6 +245,7 @@ async function clickLike(page, locator) {
     void c.offsetWidth;
     c.classList.add("click");
   });
+  sfx(rec, "click");
   await page.waitForTimeout(160);
   await locator.click();
 }
@@ -230,62 +265,115 @@ async function smoothScroll(page, y, ms = 1400) {
   }, { y, ms });
 }
 
-// Side panel shown docked on the right of a branded stage, like it sits in Chrome.
+// Side panel docked on the right of a colourful, moving stage.
 async function stagePanel(panel) {
   await panel.evaluate(() => {
     const s = document.createElement("style");
-    s.textContent = `html{background:radial-gradient(900px 520px at 15% 10%,#ede9fe 0%,transparent 60%),radial-gradient(700px 500px at 30% 100%,#fce7f3 0%,transparent 60%),linear-gradient(160deg,#f8f7ff,#eef2ff)!important;min-height:100%}
-      body{zoom:1.3;width:420px;margin:0 50px 0 auto!important;box-shadow:-10px 0 40px rgba(20,20,43,.15);min-height:100vh}
-      #__stage{position:fixed;left:70px;top:0;bottom:0;width:560px;display:flex;flex-direction:column;justify-content:center;pointer-events:none;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
-      #__stage .brand{font:800 22px -apple-system,Segoe UI,Roboto,sans-serif;color:#4a3aff;margin-bottom:16px}
-      #__stage h1{font-size:46px;line-height:1.08;margin:0;color:#14142b;letter-spacing:-.02em;transition:all .5s cubic-bezier(.2,.9,.3,1.2)}
-      #__stage p{font-size:22px;line-height:1.45;color:#4b5563;margin:16px 0 0;transition:all .5s .08s cubic-bezier(.2,.9,.3,1.2)}
-      #__stage.out h1,#__stage.out p{opacity:0;transform:translateY(18px)}
-      #__cap{display:none!important}`;
+    s.textContent = `html{background:#f5f3ff!important;min-height:100%;overflow-x:hidden}
+      #__blobs{position:fixed;inset:-20%;z-index:-1;pointer-events:none;filter:blur(60px);opacity:.75}
+      #__blobs i{position:absolute;width:46vw;height:46vw;border-radius:50%;animation:__drift 14s ease-in-out infinite alternate}
+      #__blobs i:nth-child(1){background:#a78bfa;left:5%;top:10%}
+      #__blobs i:nth-child(2){background:#f9a8d4;left:25%;top:45%;animation-duration:17s;animation-delay:-4s}
+      #__blobs i:nth-child(3){background:#67e8f9;left:-5%;top:55%;animation-duration:12s;animation-delay:-8s}
+      #__blobs i:nth-child(4){background:#fde68a;left:30%;top:0%;animation-duration:19s}
+      @keyframes __drift{0%{transform:translate(0,0) scale(1)}50%{transform:translate(8vw,-6vh) scale(1.15)}100%{transform:translate(-6vw,8vh) scale(.95)}}
+      body{zoom:1.45;width:420px;margin:0 36px 0 auto!important;box-shadow:-14px 0 50px rgba(76,29,149,.22);min-height:100vh;background:#f6f7fb}
+      #__stage{position:fixed;left:64px;top:0;bottom:0;width:560px;display:flex;flex-direction:column;justify-content:center;pointer-events:none;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+      #__stage .brand{font:800 22px -apple-system,Segoe UI,Roboto,sans-serif;color:#4f46e5;margin-bottom:14px;display:flex;gap:10px;align-items:center}
+      #__stage .emoji{font-size:58px;display:inline-block;margin-bottom:6px;animation:__bob 2.4s ease-in-out infinite}
+      @keyframes __bob{0%,100%{transform:translateY(0) rotate(-6deg)}50%{transform:translateY(-10px) rotate(6deg)}}
+      #__stage h1{font-size:50px;line-height:1.06;margin:0;letter-spacing:-.02em;background:linear-gradient(90deg,#4f46e5,#c026d3,#ea580c);-webkit-background-clip:text;color:transparent;
+        transition:all .55s cubic-bezier(.2,1.3,.3,1)}
+      #__stage p{font-size:23px;line-height:1.45;color:#374151;margin:16px 0 0;transition:all .55s .08s cubic-bezier(.2,1.3,.3,1)}
+      #__stage.out h1,#__stage.out p,#__stage.out .emoji{opacity:0;transform:translateY(24px) scale(.96)}
+      #__score{margin-top:26px;display:none;align-items:center;gap:16px;font-weight:900;font-size:64px}
+      #__score.on{display:flex;animation:__in .7s cubic-bezier(.2,1.5,.3,1) both}
+      #__score .from{color:#9ca3af;font-size:44px}#__score .arrow{font-size:40px;color:#a855f7}
+      #__score .to{background:linear-gradient(90deg,#16a34a,#06b6d4);-webkit-background-clip:text;color:transparent}
+      @keyframes __in{from{opacity:0;transform:scale(.4)}to{opacity:1;transform:none}}`;
     document.documentElement.appendChild(s);
+    const blobs = document.createElement("div");
+    blobs.id = "__blobs";
+    blobs.innerHTML = "<i></i><i></i><i></i><i></i>";
+    document.documentElement.appendChild(blobs);
     const st = document.createElement("div");
     st.id = "__stage";
     st.className = "out";
-    st.innerHTML = '<div class="brand">⚡ Hiresprint</div><h1></h1><p></p>';
+    st.innerHTML = '<div class="brand">⚡ Hiresprint</div><div class="emoji"></div><h1></h1><p></p><div id="__score"><span class="from"></span><span class="arrow">➜</span><span class="to"></span></div>';
     document.documentElement.appendChild(st);
   });
   await fx(panel);
 }
 
-async function stageText(panel, title, sub) {
-  await panel.evaluate(({ title, sub }) => {
+async function stageText(rec, panel, emoji, title, sub) {
+  await panel.evaluate(({ emoji, title, sub }) => {
     const st = document.getElementById("__stage");
     st.classList.add("out");
+    document.getElementById("__score").classList.remove("on");
     setTimeout(() => {
+      st.querySelector(".emoji").textContent = emoji;
       st.querySelector("h1").textContent = title;
       st.querySelector("p").textContent = sub;
       st.classList.remove("out");
-    }, 300);
-  }, { title, sub });
+    }, 320);
+  }, { emoji, title, sub });
+  sfx(rec, "pop", 0.32);
 }
 
-async function card(app, html, scene, scenes) {
+// Count the score up on the stage, with confetti.
+async function scoreUp(rec, panel, from, to) {
+  await panel.evaluate(({ from, to }) => {
+    const el = document.getElementById("__score");
+    el.querySelector(".from").textContent = `${from}%`;
+    const out = el.querySelector(".to");
+    el.classList.add("on");
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / 1300);
+      out.textContent = `${Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3)))}%`;
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, { from, to });
+  await panel.waitForTimeout(1300);
+  await confetti(rec, panel, panel.locator("#__score .to"));
+}
+
+// Full-screen animated cards (intro, chapters, outro).
+async function card(app, html, name, scenes, { beatScene = null, seconds = 1.6, colors = ["#4f46e5", "#db2777"] } = {}) {
   const page = await app.context.newPage();
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.setContent(`<!doctype html><meta charset="utf-8"><body style="margin:0;overflow:hidden">
-    <div id="bg" style="width:1280px;height:720px;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
-      font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#fff;background:linear-gradient(120deg,#1e1b4b,#4a3aff,#7c3aed,#db2777);background-size:300% 300%;animation:bg 9s ease infinite">
-      ${Array.from({ length: 14 }, (_, i) => `<span class="dot" style="left:${(i * 89) % 1240}px;top:${(i * 157) % 680}px;animation-delay:${(i % 7) * 0.4}s;width:${6 + (i % 4) * 4}px;height:${6 + (i % 4) * 4}px"></span>`).join("")}
-      ${html}</div>
+    <div id="bg" style="width:1280px;height:720px;position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+      font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#fff;background:linear-gradient(120deg,${colors[0]},${colors[1]},#1e1b4b,${colors[0]});background-size:300% 300%;animation:bg 6s ease infinite">
+      <div class="ring" style="width:900px;height:900px"></div><div class="ring" style="width:620px;height:620px;animation-delay:-1.5s"></div>
+      ${Array.from({ length: 22 }, (_, i) => `<span class="dot" style="left:${(i * 89) % 1260}px;top:${(i * 157) % 700}px;animation-delay:${(i % 9) * -0.5}s;width:${6 + (i % 5) * 5}px;height:${6 + (i % 5) * 5}px;background:${["#fde68a", "#f9a8d4", "#a5f3fc", "#ddd6fe", "#bbf7d0"][i % 5]}"></span>`).join("")}
+      <div style="position:relative;z-index:2">${html}</div></div>
     <style>@keyframes bg{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
-      .dot{position:absolute;border-radius:50%;background:rgba(255,255,255,.18);animation:float 6s ease-in-out infinite}
-      @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-26px)}}
-      .pop{animation:pop .9s cubic-bezier(.2,1.4,.3,1) both}.up{animation:up .8s cubic-bezier(.2,.9,.3,1) both}
-      @keyframes pop{from{transform:scale(.2) rotate(-12deg);opacity:0}to{transform:none;opacity:1}}
-      @keyframes up{from{transform:translateY(26px);opacity:0}to{transform:none;opacity:1}}
-      .chip{display:inline-block;margin:6px;padding:9px 16px;border-radius:999px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);font-weight:600;font-size:19px}
-      .cta{display:inline-block;margin-top:26px;background:#fff;color:#4a3aff;font-weight:800;font-size:26px;padding:16px 34px;border-radius:16px;animation:up .8s 1.6s both, glow 1.6s 2.4s ease-in-out infinite}
-      @keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.6)}50%{box-shadow:0 0 0 14px rgba(255,255,255,0)}}</style></body>`);
-  const rec = await record(page, scene);
-  await beat(rec, scene, 0, async () => {});
-  await page.waitForTimeout(500);
+      .dot{position:absolute;border-radius:50%;opacity:.5;animation:float 5s ease-in-out infinite}
+      @keyframes float{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-34px) scale(1.3)}}
+      .ring{position:absolute;left:50%;top:50%;border-radius:50%;border:2px solid rgba(255,255,255,.18);transform:translate(-50%,-50%);animation:ring 3s ease-in-out infinite}
+      @keyframes ring{0%,100%{transform:translate(-50%,-50%) scale(.92)}50%{transform:translate(-50%,-50%) scale(1.05)}}
+      .pop{animation:pop .9s cubic-bezier(.2,1.6,.3,1) both}.up{animation:up .7s cubic-bezier(.2,1.2,.3,1) both}
+      @keyframes pop{from{transform:scale(.1) rotate(-25deg);opacity:0}to{transform:none;opacity:1}}
+      @keyframes up{from{transform:translateY(34px);opacity:0}to{transform:none;opacity:1}}
+      .chip{display:inline-block;margin:6px;padding:10px 18px;border-radius:999px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);font-weight:700;font-size:20px;animation:up .6s both}
+      .cta{display:inline-block;margin-top:26px;background:#fff;color:#4f46e5;font-weight:900;font-size:28px;padding:16px 36px;border-radius:18px;animation:up .7s 1.4s both,glow 1.4s 2.2s ease-in-out infinite}
+      @keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.7)}50%{box-shadow:0 0 0 16px rgba(255,255,255,0)}}</style></body>`);
+  const rec = await record(page, name);
+  sfx(rec, "whoosh");
+  if (beatScene) await beat(rec, beatScene, 0, async () => {});
+  else await page.waitForTimeout(seconds * 1000);
+  await page.waitForTimeout(400);
   scenes.push(await rec.stop());
   await page.close();
+}
+
+async function chapterCard(app, n, scenes) {
+  const c = CHAPTERS[n - 1];
+  await card(app, `<div class="pop" style="font-size:96px">${c.emoji}</div>
+    <div class="up" style="font-size:22px;font-weight:800;letter-spacing:.2em;opacity:.85;animation-delay:.15s">STEP ${n} OF ${CHAPTERS.length}</div>
+    <div class="up" style="font-size:64px;font-weight:900;margin-top:8px;letter-spacing:-.02em;animation-delay:.3s">${c.name}</div>`, `ch${n}`, scenes, { seconds: 1.5, colors: c.colors });
 }
 
 test("demo video", async ({ app }) => {
@@ -333,37 +421,39 @@ test("demo video", async ({ app }) => {
   });
 
   // ---- Intro ----
-  await card(app, `<img class="pop" src="${icon}" style="width:130px;height:130px;border-radius:28px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.35)">
-    <div class="up" style="font-size:72px;font-weight:800;margin-top:24px;letter-spacing:-.02em;animation-delay:.35s">Hiresprint</div>
-    <div class="up" style="font-size:30px;color:#ede9fe;margin-top:8px;animation-delay:.7s">Apply to jobs in minutes, not hours.</div>
-    <div class="up" style="margin-top:22px;animation-delay:1.1s"><span class="chip">⚡ Autofill</span><span class="chip">🎯 Match score</span><span class="chip">✨ Tailor</span><span class="chip">📝 Cover letters</span></div>`, "intro", scenes);
+  await card(app, `<img class="pop" src="${icon}" style="width:140px;height:140px;border-radius:30px;background:#fff;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+    <div class="up" style="font-size:80px;font-weight:900;margin-top:22px;letter-spacing:-.02em;animation-delay:.3s">Hiresprint</div>
+    <div class="up" style="font-size:32px;margin-top:6px;animation-delay:.6s">Apply to jobs in minutes, not hours.</div>
+    <div style="margin-top:22px"><span class="chip" style="animation-delay:1s">⚡ Autofill</span><span class="chip" style="animation-delay:1.15s">🎯 Match score</span><span class="chip" style="animation-delay:1.3s">✨ Tailor</span><span class="chip" style="animation-delay:1.45s">📝 Cover letters</span><span class="chip" style="animation-delay:1.6s">🤖 ATS check</span></div>`,
+  "intro", scenes, { beatScene: "intro", colors: ["#4f46e5", "#db2777"] });
 
   // ---- 1. Set up ----
+  await chapterCard(app, 1, scenes);
   const panel = await context.newPage();
   await panel.setViewportSize({ width: 1280, height: 720 });
   await panel.goto(`chrome-extension://${app.id}/sidepanel.html`);
   await expect(panel.locator("#appContent")).toBeVisible();
-  await panel.waitForTimeout(1000);
+  await panel.waitForTimeout(800);
   await stagePanel(panel);
   await panel.locator("#resumeList").evaluate((el) => el.closest("section").scrollIntoView({ block: "start" }));
-  let rec = await record(panel, "setup");
-  await chapter(panel, 1);
+  let rec = await record(panel, "setup", 1);
   await beat(rec, "setup", 0, async () => {
-    await stageText(panel, "Set up once", "Upload your resume — that's it.");
-    await panel.waitForTimeout(600);
-    const upload = panel.locator("label[for='resumeFile']");
-    await clickLike(panel, upload).catch(() => {});
+    await stageText(rec, panel, "📄", "Set up once", "Upload your resume — that's it.");
+    await panel.waitForTimeout(500);
+    await clickLike(rec, panel, panel.locator("label[for='resumeFile']")).catch(() => {});
     await panel.locator("#resumeFile").setInputFiles(pdfPath);
     await expect(panel.locator("#resumeList .resume-row")).toHaveCount(1, { timeout: 20000 });
+    sfx(rec, "pop");
     await spotlight(panel, panel.locator("#resumeList"));
   });
   await beat(rec, "setup", 1, async () => {
     await spotlight(panel, null);
-    await stageText(panel, "Your profile fills itself in", "Name, contact details, links, and work history.");
+    await stageText(rec, panel, "🪄", "Your profile fills itself in", "Name, contact details, links, and work history.");
     await panel.locator("#sf_firstName").evaluate((el) => el.closest("section").scrollIntoView({ block: "start", behavior: "smooth" }));
     await expect(panel.locator("#sf_firstName")).toHaveValue(profile.firstName, { timeout: 15000 });
     await panel.waitForTimeout(900);
     await spotlight(panel, panel.locator("#sf_firstName").locator("xpath=ancestor::section[1]"), 4);
+    await confetti(rec, panel, panel.locator("#sf_firstName"));
   });
   await spotlight(panel, null);
   scenes.push(await rec.stop());
@@ -374,139 +464,188 @@ test("demo video", async ({ app }) => {
     await chrome.storage.local.set({ resumes });
   });
 
-  // ---- 2. Match score on a job posting ----
+  // ---- 2. Match score ----
+  await chapterCard(app, 2, scenes);
   const post = await context.newPage();
   await post.setViewportSize({ width: 1280, height: 720 });
   await post.goto(POSTING);
   const badge = post.locator("#hiresprint-match");
   await expect(badge).toBeAttached({ timeout: 15000 });
   await post.evaluate(() => document.getElementById("jobpilot-fab")?.remove());
-  rec = await record(post, "match");
-  await chapter(post, 2);
+  rec = await record(post, "match", 2);
   await beat(rec, "match", 0, async () => {
-    await caption(post, "🎯 Your match, right on the job posting");
-    await post.waitForTimeout(500);
+    caption(rec, "🎯  Your match, right on the job posting");
+    await post.waitForTimeout(400);
+    await focus(rec, badge.locator(".pill"), 1.9);
     await spotlight(post, badge.locator(".pill"), 10);
+    sfx(rec, "pop", 0.3);
   });
   await beat(rec, "match", 1, async () => {
     await spotlight(post, null);
-    await clickLike(post, badge.locator(".pill"));
-    await post.waitForTimeout(600);
-    await caption(post, "✓ Skills you have   ✗ Skills you're missing");
+    await clickLike(rec, post, badge.locator(".pill"));
+    await post.waitForTimeout(500);
+    caption(rec, "✅  Skills you have    ❌  Skills you're missing");
+    await focus(rec, badge.locator(".panel"), 1.75);
     await spotlight(post, badge.locator(".panel"), 8);
   });
   await spotlight(post, null);
+  wide(rec);
+  await post.waitForTimeout(700);
   scenes.push(await rec.stop());
 
   // ---- 3. Tailor ----
+  await chapterCard(app, 3, scenes);
   await post.bringToFront();
   await panel.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(panel.locator("#matchCard")).toBeVisible({ timeout: 15000 });
   await panel.locator("#matchCard").evaluate((el) => el.scrollIntoView({ block: "start" }));
-  rec = await record(panel, "tailor");
-  await chapter(panel, 3);
+  rec = await record(panel, "tailor", 3);
   await beat(rec, "tailor", 0, async () => {
-    await stageText(panel, "Tailor your resume in one click", "For this exact job.");
+    await stageText(rec, panel, "✨", "Tailor in one click", "Made for this exact job.");
     await panel.waitForTimeout(500);
-    await clickLike(panel, panel.locator("#tailorBtn"));
+    await clickLike(rec, panel, panel.locator("#tailorBtn"));
     await expect(panel.locator(".tailor-item").first()).toBeVisible({ timeout: 15000 });
+    sfx(rec, "pop");
   });
   await beat(rec, "tailor", 1, async () => {
-    await stageText(panel, "Your score goes up", "Your own bullets, in the job's words. Nothing invented.");
+    await stageText(rec, panel, "📈", "Your score goes up", "Your own bullets, in the job's words. Nothing invented.");
     await panel.locator(".tailor-score").evaluate((el) => el.scrollIntoView({ block: "start", behavior: "smooth" }));
     await panel.waitForTimeout(700);
     await spotlight(panel, panel.locator(".tailor-score"), 6);
-    await panel.waitForTimeout(2200);
+    const [from, to] = (await panel.locator(".tailor-score").innerText()).match(/\d+/g).map(Number);
+    await scoreUp(rec, panel, from, to);
+    await panel.waitForTimeout(800);
     await spotlight(panel, panel.locator(".tailor-item").nth(1), 4);
   });
   await beat(rec, "tailor", 2, async () => {
     await spotlight(panel, null);
-    await stageText(panel, "Keeps your resume's design", "Only the changed bullets are rewritten in your own file.");
+    await stageText(rec, panel, "🎨", "Keeps your design", "Only the changed bullets are rewritten in your own file.");
     const use = panel.getByRole("button", { name: "Use for this application" });
     await use.evaluate((el) => el.scrollIntoView({ block: "center", behavior: "smooth" }));
-    await panel.waitForTimeout(700);
-    await clickLike(panel, use);
+    await panel.waitForTimeout(600);
+    await clickLike(rec, panel, use);
     await expect(panel.locator(".tailor-note")).toContainText(/Kept your resume's design|keep your resume's design/, { timeout: 15000 });
     await spotlight(panel, panel.locator(".tailor-note"), 6);
+    sfx(rec, "pop");
   });
   await spotlight(panel, null);
   scenes.push(await rec.stop());
 
-  // ---- 4. Autofill with a cover letter ----
+  // ---- 4. Autofill ----
+  await chapterCard(app, 4, scenes);
   const form = await context.newPage();
   await form.setViewportSize({ width: 1280, height: 720 });
   await form.goto(`${BACKEND}/practice.html`);
   await expect(form.locator("#jobpilot-fab")).toBeVisible({ timeout: 15000 });
   await form.evaluate(() => document.querySelector(".banner")?.remove());
   await form.locator("#application").evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 10));
-  rec = await record(form, "autofill");
-  await chapter(form, 4);
+  await fx(form);
+  rec = await record(form, "autofill", 4);
   await beat(rec, "autofill", 0, async () => {
-    await caption(form, "⚡ One click on any application");
-    await form.waitForTimeout(400);
-    await clickLike(form, form.locator("#jobpilot-fab").getByRole("button", { name: /autofill/i }));
+    caption(rec, "⚡  One click on any application");
+    await form.waitForTimeout(300);
+    const fab = form.locator("#jobpilot-fab").getByRole("button", { name: /autofill/i });
+    await focus(rec, fab, 1.5);
+    await clickLike(rec, form, fab);
   });
   await beat(rec, "autofill", 1, async () => {
     await expect(form.locator("#first_name")).toHaveValue(profile.firstName, { timeout: 15000 });
-    await caption(form, "🟢 From your profile   🔵 AI answers to review");
-    await spotlight(form, form.locator("#first_name").locator("xpath=ancestor::div[contains(@class,'row2')][1]"), 6);
+    caption(rec, "🟢  From your profile    🔵  AI answers to review");
+    await focus(rec, form.locator("#first_name").locator("xpath=ancestor::div[contains(@class,'row2')][1]"), 1.45);
+    sfx(rec, "pop");
     await form.waitForTimeout(1600);
-    await spotlight(form, null);
     await expect(form.locator("#why")).not.toHaveValue("", { timeout: 15000 });
-    await smoothScroll(form, await form.locator("#why").evaluate((el) => el.getBoundingClientRect().top + window.scrollY - 260), 1800);
+    wide(rec);
+    await smoothScroll(form, await form.locator("#why").evaluate((el) => el.getBoundingClientRect().top + window.scrollY - 260), 1600);
+    await focus(rec, form.locator("#why"), 1.5);
     await spotlight(form, form.locator("#why"), 6);
   });
   await beat(rec, "autofill", 2, async () => {
     await spotlight(form, null);
     await expect(form.locator("#cover_letter")).not.toHaveValue("", { timeout: 20000 });
-    await caption(form, "📝 A cover letter written for this job");
-    await smoothScroll(form, await form.locator("#cover_letter").evaluate((el) => el.getBoundingClientRect().top + window.scrollY - 200), 1500);
+    caption(rec, "📝  A cover letter written for this job");
+    wide(rec);
+    await smoothScroll(form, await form.locator("#cover_letter").evaluate((el) => el.getBoundingClientRect().top + window.scrollY - 200), 1300);
+    await focus(rec, form.locator("#cover_letter"), 1.55);
     await spotlight(form, form.locator("#cover_letter"), 6);
+    sfx(rec, "pop");
   });
   await beat(rec, "autofill", 3, async () => {
     await spotlight(form, null);
-    await caption(form, "✅ Review the checklist — you submit");
+    caption(rec, "✅  Review the checklist — you submit");
+    await focus(rec, form.locator("#jobpilot-checklist"), 1.5);
     await spotlight(form, form.locator("#jobpilot-checklist"), 4);
-    await form.waitForTimeout(1200);
-    await stat(form, '<span style="color:#6b7280;font-size:15px">Time per application</span><span class="big">20 min → 1 min</span>');
+    await form.waitForTimeout(1500);
+    await spotlight(form, null);
+    wide(rec);
+    await form.waitForTimeout(500);
+    await stat(rec, form, '<span style="color:#6b7280;font-size:16px">⏱ Time per application</span><span class="big">20 min → 1 min</span>');
+    await confetti(rec, form, form.locator("#__stat"));
   });
-  await spotlight(form, null);
   scenes.push(await rec.stop());
 
   // ---- 5. ATS check ----
+  await chapterCard(app, 5, scenes);
   await panel.locator("#resumeList").evaluate((el) => el.closest("section").scrollIntoView({ block: "start" }));
-  rec = await record(panel, "ats");
-  await chapter(panel, 5);
+  rec = await record(panel, "ats", 5);
   await beat(rec, "ats", 0, async () => {
-    await stageText(panel, "Pass the ATS check", "See how hiring systems read your resume.");
-    await clickLike(panel, panel.locator("#resumeList .resume-row").first().getByRole("button", { name: "ATS check" }));
+    await stageText(rec, panel, "🤖", "Pass the ATS check", "See how hiring systems read your resume.");
+    await clickLike(rec, panel, panel.locator("#resumeList .resume-row").first().getByRole("button", { name: "ATS check" }));
     await expect(panel.locator(".ats-report")).toBeVisible();
-    await panel.waitForTimeout(500);
+    await panel.waitForTimeout(400);
     await spotlight(panel, panel.locator(".ats-report"), 4);
+    await confetti(rec, panel, panel.locator(".ats-score"));
   });
   await spotlight(panel, null);
   scenes.push(await rec.stop());
 
   // ---- 6. Answer Studio ----
+  await chapterCard(app, 6, scenes);
   await panel.locator("#answerStudio").evaluate((el) => el.scrollIntoView({ block: "start" }));
-  rec = await record(panel, "studio");
-  await chapter(panel, 6);
+  rec = await record(panel, "studio", 6);
   await beat(rec, "studio", 0, async () => {
-    await stageText(panel, "Answer once, reuse everywhere", "Salary, notice period, relocation, and more.");
+    await stageText(rec, panel, "🗂️", "Answer once, reuse everywhere", "Salary, notice period, relocation, and more.");
     for (const [id, value] of [["salaryRole1", "Software Engineer"], ["salaryAmount1", "$165,000"], ["noticePeriod", "2 weeks"]]) {
       const field = panel.locator(`#sf_${id}`);
       await moveTo(panel, field);
+      sfx(rec, "click");
       await field.pressSequentially(value, { delay: 45 });
     }
   });
   scenes.push(await rec.stop());
 
   // ---- Outro ----
-  await card(app, `<div class="up" style="font-size:20px;color:#ede9fe;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Works on</div>
-    <div class="up" style="font-size:28px;font-weight:700;margin:12px 0 26px;line-height:1.5;max-width:1040px;animation-delay:.3s">Workday · Greenhouse · Lever · Ashby · iCIMS · SmartRecruiters<br>Taleo · SuccessFactors · LinkedIn · Indeed · and more</div>
-    <img class="pop" src="${icon}" style="width:92px;height:92px;border-radius:22px;background:#fff;animation-delay:.8s">
-    <div class="up" style="font-size:56px;font-weight:800;margin-top:14px;animation-delay:1.1s">Add Hiresprint to Chrome</div>
-    <div class="cta">It's free →</div>`, "outro", scenes);
+  await card(app, `<div class="up" style="font-size:21px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;opacity:.9">Works on</div>
+    <div class="up" style="font-size:30px;font-weight:800;margin:12px 0 26px;line-height:1.5;max-width:1060px;animation-delay:.25s">Workday · Greenhouse · Lever · Ashby · iCIMS · SmartRecruiters<br>Taleo · SuccessFactors · LinkedIn · Indeed · and more</div>
+    <img class="pop" src="${icon}" style="width:100px;height:100px;border-radius:24px;background:#fff;animation-delay:.7s">
+    <div class="up" style="font-size:60px;font-weight:900;margin-top:14px;animation-delay:1s">Add Hiresprint to Chrome</div>
+    <div class="cta">It's free →</div>`, "outro", scenes, { beatScene: "outro", colors: ["#7c3aed", "#f97316"] });
 
+  // ---- Overlay images for captions and the chapter pill (composited in post) ----
+  const ov = await context.newPage();
+  await ov.setViewportSize({ width: 2560, height: 400 });
+  const overlayDir = path.join(DIR, "overlays");
+  fs.mkdirSync(overlayDir, { recursive: true });
+  const renderOverlay = async (html, file) => {
+    await ov.setContent(`<!doctype html><meta charset="utf-8"><body style="margin:0;background:transparent"><div id="o" style="display:inline-block">${html}</div></body>`);
+    await ov.locator("#o").screenshot({ path: file, omitBackground: true });
+  };
+  let n = 0;
+  for (const scene of scenes) {
+    for (const c of scene.captions) {
+      c.png = path.join(overlayDir, `cap-${n++}.png`);
+      await renderOverlay(`<div style="font:800 54px/1.25 'Segoe UI',Roboto,sans-serif;color:#fff;padding:26px 52px;border-radius:30px;
+        background:linear-gradient(120deg,rgba(79,70,229,.96),rgba(192,38,211,.96),rgba(234,88,12,.96));box-shadow:0 0 0 4px rgba(255,255,255,.25)">${c.text}</div>`, c.png);
+    }
+    if (scene.chapter) {
+      const c = CHAPTERS[scene.chapter - 1];
+      scene.chapterPng = path.join(overlayDir, `chapter-${scene.chapter}.png`);
+      await renderOverlay(`<div style="display:flex;align-items:center;gap:18px;font:800 34px 'Segoe UI',Roboto,sans-serif;color:#1e1b4b;background:rgba(255,255,255,.95);
+        padding:14px 30px 14px 14px;border-radius:999px;border:3px solid ${c.colors[0]}">
+        <span style="background:linear-gradient(135deg,${c.colors[0]},${c.colors[1]});color:#fff;border-radius:999px;padding:8px 22px">${scene.chapter}/${CHAPTERS.length}</span>
+        <span>${c.emoji} ${c.name}</span></div>`, scene.chapterPng);
+    }
+  }
+  await ov.close();
   fs.writeFileSync(path.join(DIR, "scenes.json"), JSON.stringify(scenes, null, 2));
 });

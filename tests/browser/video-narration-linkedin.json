@@ -1,0 +1,33 @@
+{
+  "intro": [
+    "Job applications take forever. Hiresprint makes them fast."
+  ],
+  "setup": [
+    "Upload your resume once.",
+    "Your profile fills itself in."
+  ],
+  "match": [
+    "Every job posting shows your match score,",
+    "with the skills you have, and the ones you're missing."
+  ],
+  "tailor": [
+    "Tailor your resume in one click.",
+    "Your own bullets, in the job's words. Your match goes up.",
+    "And your resume keeps its design."
+  ],
+  "autofill": [
+    "Now click Autofill.",
+    "The whole application fills in seconds.",
+    "Plus a cover letter for this exact job.",
+    "Review and submit. Fifteen minutes, down to one."
+  ],
+  "ats": [
+    "Run an ATS check to see how hiring systems read your resume, and what to fix."
+  ],
+  "studio": [
+    "Save answers like salary once, and reuse them everywhere."
+  ],
+  "outro": [
+    "Hiresprint. Free on the Chrome Web Store."
+  ]
+}

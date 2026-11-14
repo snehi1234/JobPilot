@@ -17,7 +17,8 @@ const path = require("node:path");
 const sharp = require("sharp");
 
 const ROOT = path.join(__dirname, "..", "..");
-const DIR = process.env.VIDEO_WORK_DIR || path.join(os.tmpdir(), "hs-video3");
+const VARIANT = process.env.VIDEO_VARIANT || "main"; // "main" (store/YouTube) or "linkedin" (~60s, subtitles)
+const DIR = process.env.VIDEO_WORK_DIR || path.join(os.tmpdir(), VARIANT === "linkedin" ? "hs-video-linkedin" : "hs-video3");
 const VOICE = process.env.VIDEO_VOICE || "en-US-AndrewNeural";
 const FFMPEG = execFileSync("python", ["-c", "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"], { encoding: "utf8" }).trim();
 const OUT_W = 2560, OUT_H = 1440, FPS = 60;
@@ -92,6 +93,7 @@ async function composite(scene, index) {
   const scale = meta.width / 1280;
   const total = Math.max(1, Math.round(scene.length * FPS));
   const captions = await Promise.all((scene.captions || []).map(async (c) => ({ ...c, ov: await overlay(c.png) })));
+  const subs = await Promise.all((scene.subs || []).filter((s) => s.png).map(async (s) => ({ ...s, ov: await overlay(s.png) })));
   const chapter = scene.chapterPng ? await overlay(scene.chapterPng) : null;
   let src = 0;
   let lastKey = "";
@@ -110,9 +112,15 @@ async function composite(scene, index) {
       const alpha = Math.min(pIn, pOut);
       if (alpha > 0.02) {
         const left = Math.round((OUT_W - cap.ov.width) / 2);
-        const top = Math.round(OUT_H - cap.ov.height - 70 + (1 - pIn) * 60);
+        // With subtitles at the bottom, feature captions move to the top.
+        const top = subs.length ? Math.round(150 - (1 - pIn) * 40) : Math.round(OUT_H - cap.ov.height - 70 + (1 - pIn) * 60);
         layers.push({ ov: cap.ov, alpha, left, top });
       }
+    }
+    const sub = subs.find((s) => t >= s.t && t <= s.t + s.dur + 0.25);
+    if (sub) {
+      const alpha = Math.min(clamp01((t - sub.t) / 0.15), clamp01((sub.t + sub.dur + 0.25 - t) / 0.15));
+      layers.push({ ov: sub.ov, alpha, left: Math.round((OUT_W - sub.ov.width) / 2), top: OUT_H - sub.ov.height - 50 });
     }
     if (chapter) {
       const p = ease(clamp01((t - 0.15) / 0.6));
@@ -154,7 +162,7 @@ async function composite(scene, index) {
 
 (async () => {
   // 1. Narration and sound effects
-  const script = JSON.parse(fs.readFileSync(path.join(__dirname, "video-narration.json"), "utf8"));
+  const script = JSON.parse(fs.readFileSync(path.join(__dirname, VARIANT === "linkedin" ? "video-narration-linkedin.json" : "video-narration.json"), "utf8"));
   const beats = {};
   for (const [scene, lines] of Object.entries(script)) {
     beats[scene] = lines.map((text) => {
@@ -201,7 +209,7 @@ async function composite(scene, index) {
     "-c:v", "libx264", "-preset", "slow", "-crf", "15", "-pix_fmt", "yuv420p", "-r", String(FPS), video]);
 
   // 5. Audio
-  const SFX_GAIN = { click: 0.55, pop: 0.6, whoosh: 0.55, chime: 0.5 };
+  const SFX_GAIN = { click: 0.5, pop: 0.5, whoosh: 0.2, chime: 0.4 };
   const voiceEvents = scenes.flatMap((s, i) => s.voice.map((v) => ({ file: v.file, at: starts[i] + v.offset })));
   const sfxEvents = [
     ...scenes.flatMap((s, i) => s.sfx.filter((e) => e.name !== "whoosh").map((e) => ({ name: e.name, at: starts[i] + e.t }))),
@@ -221,7 +229,7 @@ async function composite(scene, index) {
   execFileSync("python", [path.join(__dirname, "video-music.py"), String(Math.ceil(total) + 1), music], { stdio: "inherit" });
   const mixed = path.join(DIR, "mixed.wav");
   ff(["-i", voiceWav, "-i", sfxWav, "-i", music, "-filter_complex",
-    "[0:a]asplit=2[voice][key];[2:a]volume=0.5[bed];[bed][key]sidechaincompress=threshold=0.04:ratio=5:attack=25:release=500[ducked];" +
+    "[0:a]asplit=2[voice][key];[2:a]volume=0.4[bed];[bed][key]sidechaincompress=threshold=0.04:ratio=5:attack=25:release=500[ducked];" +
     `[voice][1:a][ducked]amix=inputs=3:normalize=0,atrim=0:${total.toFixed(3)}[o]`, "-map", "[o]", "-ar", "48000", mixed]);
   // Two-pass loudness normalization (linear, so the mix balance is kept).
   const pass1 = spawnSync(FFMPEG, ["-i", mixed, "-af", "loudnorm=I=-14:TP=-1:LRA=11:print_format=json", "-f", "null", "-"], { encoding: "utf8" }).stderr;
@@ -230,7 +238,7 @@ async function composite(scene, index) {
   ff(["-i", mixed, "-af", `loudnorm=I=-14:TP=-1:LRA=11:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true,aresample=48000`,
     "-c:a", "aac", "-b:a", "256k", audio]);
 
-  const target = path.join(ROOT, "store-assets", "hiresprint-demo.mp4");
+  const target = path.join(ROOT, "store-assets", VARIANT === "linkedin" ? "hiresprint-demo-linkedin.mp4" : "hiresprint-demo.mp4");
   ff(["-i", video, "-i", audio, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "copy", "-shortest", "-movflags", "+faststart", target]);
   console.log(`wrote ${target} (${duration(target).toFixed(1)}s, ${OUT_W}x${OUT_H} @ ${FPS} fps)`);
 })().catch((err) => {

@@ -11,6 +11,7 @@ test.skip(!DIR, "Run tests/browser/make-video.cjs to record the demo video.");
 test.setTimeout(900000);
 
 const DPR = 2.5; // 1280x720 CSS px → 3200x1800 frames
+const LINKEDIN = process.env.VIDEO_VARIANT === "linkedin"; // ~60s cut with subtitles, no chapter cards
 const BACKEND = "https://backend-alpha-seven-87.vercel.app";
 const POSTING = "https://job-boards.greenhouse.io/northwindlabs/jobs/42";
 const BEATS = DIR ? JSON.parse(fs.readFileSync(path.join(DIR, "beats.json"), "utf8")) : {};
@@ -82,7 +83,7 @@ async function record(page, name, chapter = 0) {
   const start = Date.now() / 1000;
   const rec = {
     now: () => Date.now() / 1000 - start,
-    voice: [], captions: [], cam: [{ t: 0, x: 0, y: 0, w: 1280 }], sfx: [], chapter,
+    voice: [], subs: [], captions: [], cam: [{ t: 0, x: 0, y: 0, w: 1280 }], sfx: [], chapter,
     async stop() {
       await page.waitForTimeout(150);
       await cdp.send("Page.stopScreencast").catch(() => {});
@@ -95,7 +96,7 @@ async function record(page, name, chapter = 0) {
         fs.writeFileSync(file, Buffer.from(f.data, "base64"));
         return { file, t: Math.max(0, f.t - start) };
       });
-      return { name, dir, frames: list, length: end - start, voice: rec.voice, captions: rec.captions, cam: rec.cam, sfx: rec.sfx, chapter: rec.chapter };
+      return { name, dir, frames: list, length: end - start, voice: rec.voice, subs: rec.subs, captions: rec.captions, cam: rec.cam, sfx: rec.sfx, chapter: rec.chapter };
     },
   };
   return rec;
@@ -107,8 +108,9 @@ async function beat(rec, scene, index, actions = async () => {}) {
   const b = BEATS[scene][index];
   const at = rec.now();
   rec.voice.push({ file: b.file, offset: at + 0.15 });
+  rec.subs.push({ t: at + 0.15, dur: b.dur, text: b.text });
   await actions();
-  const left = at + b.dur + 0.45 - rec.now();
+  const left = at + b.dur + (LINKEDIN ? 1.05 : 0.45) - rec.now();
   if (left > 0) await new Promise((r) => setTimeout(r, left * 1000));
 }
 
@@ -364,12 +366,13 @@ async function card(app, html, name, scenes, { beatScene = null, seconds = 1.6, 
   sfx(rec, "whoosh");
   if (beatScene) await beat(rec, beatScene, 0, async () => {});
   else await page.waitForTimeout(seconds * 1000);
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(LINKEDIN && name === "outro" ? 2600 : 400);
   scenes.push(await rec.stop());
   await page.close();
 }
 
 async function chapterCard(app, n, scenes) {
+  if (LINKEDIN) return;
   const c = CHAPTERS[n - 1];
   await card(app, `<div class="pop" style="font-size:96px">${c.emoji}</div>
     <div class="up" style="font-size:22px;font-weight:800;letter-spacing:.2em;opacity:.85;animation-delay:.15s">STEP ${n} OF ${CHAPTERS.length}</div>
@@ -579,7 +582,7 @@ test("demo video", async ({ app }) => {
     await spotlight(form, null);
     wide(rec);
     await form.waitForTimeout(500);
-    await stat(rec, form, '<span style="color:#6b7280;font-size:16px">⏱ Time per application</span><span class="big">20 min → 1 min</span>');
+    await stat(rec, form, '<span style="color:#6b7280;font-size:16px">⏱ Time per application</span><span class="big">15 min → 1 min</span>');
     await confetti(rec, form, form.locator("#__stat"));
   });
   scenes.push(await rec.stop());
@@ -636,6 +639,13 @@ test("demo video", async ({ app }) => {
       c.png = path.join(overlayDir, `cap-${n++}.png`);
       await renderOverlay(`<div style="font:800 54px/1.25 'Segoe UI',Roboto,sans-serif;color:#fff;padding:26px 52px;border-radius:30px;
         background:linear-gradient(120deg,rgba(79,70,229,.96),rgba(192,38,211,.96),rgba(234,88,12,.96));box-shadow:0 0 0 4px rgba(255,255,255,.25)">${c.text}</div>`, c.png);
+    }
+    if (LINKEDIN) {
+      for (const s of scene.subs || []) {
+        s.png = path.join(overlayDir, `sub-${n++}.png`);
+        await renderOverlay(`<div style="max-width:1900px;font:700 50px/1.3 'Segoe UI',Roboto,sans-serif;color:#fff;text-align:center;padding:18px 36px;border-radius:22px;
+          background:rgba(15,12,40,.82);text-shadow:0 2px 6px rgba(0,0,0,.4)">${s.text}</div>`, s.png);
+      }
     }
     if (scene.chapter) {
       const c = CHAPTERS[scene.chapter - 1];

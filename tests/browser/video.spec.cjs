@@ -148,7 +148,7 @@ async function fx(page) {
         -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:__spin 2.2s linear infinite}
       @property --a{syntax:"<angle>";initial-value:0deg;inherits:false}
       @keyframes __spin{to{--a:360deg}}
-      #__stat{position:fixed;right:40px;top:90px;z-index:2147483646;pointer-events:none;background:#fff;border-radius:20px;padding:18px 26px;
+      #__stat{position:fixed;left:28px;top:250px;z-index:2147483647;pointer-events:none;background:#fff;border-radius:20px;padding:18px 26px;
         box-shadow:0 24px 60px rgba(30,27,75,.35);font:600 18px -apple-system,Segoe UI,Roboto,sans-serif;color:#1e1b4b;transform:translateY(-30px) scale(.6) rotate(-6deg);opacity:0;
         transition:all .7s cubic-bezier(.2,1.5,.3,1)}
       #__stat.on{transform:none;opacity:1}
